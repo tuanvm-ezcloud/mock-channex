@@ -25,9 +25,9 @@ browser — but it's backed by a tiny zero-dependency Node server.
 ## Run
 
 ```bash
-node mock-channex/server.js
+node server.js
 # or a custom port:
-# PORT=5000 node mock-channex/server.js
+# PORT=5000 node server.js
 ```
 
 Then open <http://localhost:4000>.
@@ -87,7 +87,7 @@ Reviews" app), and `GET /api/v1/scores/{id}` / `…/detailed`. `POST /mock/revie
 
 ## Bidirectional review-flow verification
 
-`node mock-channex/verify-review-flow.js` runs an automated PASS/FAIL check of the whole review flow in
+`node verify-review-flow.js` runs an automated PASS/FAIL check of the whole review flow in
 **both directions** — it spawns the mock and an ezMessage stand-in that mirrors the exact ingest/reply
 decisions of `ReviewIngestService` / `ReviewWebhookService` / extranet `ReviewService`, then asserts:
 inbound `review`+`updated_review` (pull, upsert, C5/C6 fields, B1 property, C7 change-detect & OTA-reply
@@ -113,8 +113,8 @@ network instead (a small VM, or Cloudflare-tunnel it from a machine on the VPN).
 
 ### Render (free, Docker) — recommended
 A Blueprint (`render.yaml`) and `Dockerfile` are included. In Render: **New → Blueprint** and
-pick this repo, or create a **Web Service** manually with **Root Directory** `mock-channex`,
-**Runtime** Docker, **Plan** Free. Render injects `$PORT` (the server honours it) and gives you
+pick this repo, or create a **Web Service** manually with **Runtime** Docker, **Plan** Free
+(the repo root is the app — leave Root Directory blank). Render injects `$PORT` (the server honours it) and gives you
 `https://<name>.onrender.com`. Then wire both ends:
 - in the deployed mock's UI, set the **ezMessage URL** field to your UAT customer.api base
   incl. its context path, e.g. `https://<uat-host>/api/v1/ezmessage`
@@ -129,7 +129,7 @@ Same URL wiring. One small always-on instance (no spin-down).
 
 ### Any VM, with Docker
 ```bash
-docker build -t mock-channex ./mock-channex
+docker build -t mock-channex .
 docker run -p 4000:4000 mock-channex
 ```
 
