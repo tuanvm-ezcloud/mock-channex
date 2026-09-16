@@ -1,0 +1,12 @@
+# Render Blueprint for the Mock Channex server.
+# Use: Render dashboard → New → Blueprint → pick this repo. Or create a Web Service
+# manually with Root Directory = mock-channex, Runtime = Docker, Plan = Free.
+services:
+  - type: web
+    name: mock-channex
+    runtime: docker
+    plan: free           # spins down after ~15 min idle; in-memory state resets on cold start
+    rootDir: mock-channex
+    dockerfilePath: Dockerfile
+    healthCheckPath: /mock/state   # returns 200 JSON
+    autoDeploy: true

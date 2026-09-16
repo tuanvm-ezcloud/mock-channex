@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mock Channex</title>
+<style>
+  :root{
+    --bg:#f4f6fb; --card:#fff; --ink:#1b2430; --muted:#6b7787; --line:#e3e8ef;
+    --brand:#2f6df6; --brand-d:#2457cc; --guest:#eef2f7; --staff:#e7f0ff;
+    --ok:#1f9d55; --warn:#d97706; --err:#dc2626; --chip:#eef2f7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+  header{background:#12325e;color:#fff;padding:12px 20px;display:flex;align-items:center;gap:12px}
+  header .logo{font-weight:700;font-size:18px;letter-spacing:.3px}
+  header .tag{font-size:11px;background:#2f6df6;padding:2px 8px;border-radius:20px}
+  header .spacer{flex:1}
+  header .api{font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;opacity:.85}
+  .wrap{max-width:1200px;margin:0 auto;padding:18px 20px 60px}
+  .grid{display:grid;grid-template-columns:1.3fr 1fr;gap:18px;align-items:start}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:18px}
+  .card h2{margin:0 0 12px;font-size:15px}
+  .card h3{margin:16px 0 8px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+  label{display:block;font-size:12px;color:var(--muted);margin:8px 0 3px}
+  input,textarea,select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff;color:var(--ink)}
+  textarea{resize:vertical;min-height:64px}
+  .row{display:flex;gap:10px}.row>*{flex:1}
+  button{cursor:pointer;border:0;border-radius:8px;padding:9px 14px;font:600 13px/1 inherit;background:var(--brand);color:#fff}
+  button:hover{background:var(--brand-d)}
+  button.ghost{background:#eef2f7;color:var(--ink)}
+  button.ghost:hover{background:#e2e8f0}
+  button.sm{padding:6px 10px;font-size:12px}
+  .tabs{display:flex;gap:6px;margin-bottom:14px}
+  .tabs button{background:#e9eef6;color:var(--ink)}
+  .tabs button.active{background:var(--brand);color:#fff}
+  .hint{font-size:12px;color:var(--muted);margin-top:4px}
+  .thread{display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto;padding:6px;background:#fafbfe;border:1px solid var(--line);border-radius:8px}
+  .bubble{max-width:78%;padding:8px 11px;border-radius:12px;font-size:13px;white-space:pre-wrap;word-break:break-word}
+  .bubble .meta{display:block;font-size:10px;color:var(--muted);margin-top:4px}
+  .guest{align-self:flex-start;background:var(--guest);border-bottom-left-radius:3px}
+  .staff{align-self:flex-end;background:var(--staff);border-bottom-right-radius:3px}
+  .empty{color:var(--muted);font-size:13px;padding:14px;text-align:center}
+  .review{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px}
+  .review .top{display:flex;align-items:center;gap:8px}
+  .score{background:#12325e;color:#fff;border-radius:8px;padding:3px 8px;font-weight:700;font-size:13px}
+  .chip{display:inline-block;background:var(--chip);border-radius:20px;padding:2px 9px;font-size:11px;color:var(--muted);margin:2px 4px 0 0}
+  .reply{margin-top:8px;padding:8px 10px;background:#e7f0ff;border-radius:8px;font-size:13px}
+  .badge{font-size:10px;padding:2px 7px;border-radius:20px;font-weight:700}
+  .badge.replied{background:#dcfce7;color:var(--ok)}
+  .badge.pending{background:#fef3c7;color:var(--warn)}
+  .log{font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;max-height:340px;overflow:auto}
+  .log .item{padding:6px 8px;border-bottom:1px solid var(--line);cursor:pointer}
+  .log .item:hover{background:#fafbfe}
+  .log .d-webhook-out{color:var(--brand)}
+  .log .d-api-in{color:var(--ok)}
+  .log .d-mock{color:var(--muted)}
+  .log .t{color:var(--muted);font-size:10px}
+  .log pre{background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;overflow:auto;white-space:pre-wrap;font-size:11px;margin:6px 0 0}
+  .kv{font:12px/1.6 ui-monospace,Menlo,Consolas,monospace;background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  .copy{float:right}
+  .flash{position:fixed;right:18px;bottom:18px;background:#12325e;color:#fff;padding:10px 16px;border-radius:8px;opacity:0;transition:.25s;pointer-events:none}
+  .flash.show{opacity:1}
+  .scores-row{display:flex;gap:8px}.scores-row input{flex:1}
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">Mock Channex</span>
+  <span class="tag">messages &amp; reviews</span>
+  <span class="spacer"></span>
+  <span class="api" id="apiBase"></span>
+</header>
+
+<div class="wrap">
+  <!-- CONFIG -->
+  <div class="card">
+    <h2>Connection</h2>
+    <div class="row">
+      <div>
+        <label>ezMessage URL (webhook target — customer.api)</label>
+        <input id="ezUrl" value="http://localhost:8080">
+        <div class="hint">Guest messages are POSTed to <code>&lt;this&gt;/channex/push_message</code></div>
+      </div>
+      <div>
+        <label>Default property_id (UUID)</label>
+        <input id="propertyId" placeholder="e.g. 680585d7-af7f-4880-8e91-25fca1508b55">
+        <div class="hint">The hotel's propertyId in ezMessage / CRS.</div>
+      </div>
+    </div>
+    <h3>Configure ezMessage to call this mock</h3>
+    <div class="kv">
+      <button class="ghost sm copy" onclick="copyBase()">copy</button>
+      channex.url=<span id="cfgBase"></span><br>
+      channex.api-key=&lt;any value&gt;
+    </div>
+    <div class="hint">Set these in <code>customer.api/src/main/resources/application.properties</code>, then restart it.</div>
+  </div>
+
+  <div class="tabs">
+    <button id="tab-msg" class="active" onclick="showTab('msg')">Messages</button>
+    <button id="tab-rev" onclick="showTab('rev')">Reviews</button>
+    <button class="ghost" style="margin-left:auto" onclick="resetState()">Reset mock</button>
+  </div>
+
+  <!-- ================= MESSAGES ================= -->
+  <div id="pane-msg" class="grid">
+    <div>
+      <div class="card">
+        <h2>Send a guest message</h2>
+        <label>Booking ID (external booking id known to ezMessage)</label>
+        <input id="msgBooking" placeholder="e.g. c680428a-573a-4969-bcd8-c92d16cff54a">
+        <div class="hint">Must match an existing booking in ezMessage, or one its CRS gRPC can resolve — otherwise ezMessage returns BOOKING_NOT_FOUND.</div>
+        <label>Message</label>
+        <textarea id="msgText" placeholder="Hi, what time is check-in?"></textarea>
+        <div style="margin-top:10px"><button onclick="sendMessage()">Send message → fire webhook</button></div>
+        <div class="hint">Flow: stores the guest message → POSTs the <code>message</code> webhook → ezMessage calls back <code>GET /api/v1/bookings/{id}/messages</code> to pull it.</div>
+      </div>
+      <div class="card">
+        <h2>Conversation thread</h2>
+        <div class="hint" style="margin-bottom:8px">Guest (left) = what you sent. Property (right) = staff replies ezMessage POSTed back.</div>
+        <div class="row" style="margin-bottom:8px">
+          <select id="threadPicker" onchange="renderThread()"></select>
+          <button class="ghost sm" style="flex:0 0 auto" onclick="refresh()">Refresh</button>
+        </div>
+        <div id="thread" class="thread"><div class="empty">No messages yet.</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Activity log</h2>
+      <div class="hint" style="margin-bottom:8px">Outgoing webhooks + incoming Channex-API callbacks. Click an entry for the payload.</div>
+      <div id="logMsg" class="log"></div>
+    </div>
+  </div>
+
+  <!-- ================= REVIEWS ================= -->
+  <div id="pane-rev" class="grid" style="display:none">
+    <div>
+      <div class="card">
+        <h2>Create a guest review</h2>
+        <div class="row">
+          <div><label>Booking ID</label><input id="revBooking" placeholder="external booking id"></div>
+          <div><label>Property ID (UUID)</label><input id="revProperty" placeholder="hotel propertyId"></div>
+        </div>
+        <div class="row">
+          <div><label>Guest name</label><input id="revGuest" value="John Guest"></div>
+          <div><label>OTA</label>
+            <select id="revOta">
+              <option>BookingCom</option><option>Expedia</option><option>Airbnb</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <div><label>Overall score (0–10)</label><input id="revScore" type="number" min="0" max="10" step="0.1" value="9.0"></div>
+          <div><label>OTA reservation id</label><input id="revResId" placeholder="optional"></div>
+        </div>
+        <label>Review content</label>
+        <textarea id="revContent" placeholder="Great stay, very clean and comfortable."></textarea>
+        <label>Category scores</label>
+        <div id="scores"></div>
+        <button class="ghost sm" style="margin-top:6px" onclick="addScore()">+ add category</button>
+        <div style="margin-top:12px"><button onclick="createReview()">Create review</button></div>
+        <div class="hint">Reviews are pull-based: after creating, trigger the pull in ezMessage (<code>GET /channex/review/get-list</code>). ezMessage then calls <code>GET /api/v1/reviews</code> here.</div>
+      </div>
+      <div class="card">
+        <h2>Reviews <button class="ghost sm" style="float:right" onclick="refresh()">Refresh</button></h2>
+        <div id="reviews"><div class="empty">No reviews yet.</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Activity log</h2>
+      <div class="hint" style="margin-bottom:8px">Watch for <code>GET /api/v1/reviews</code> (pull) and <code>POST /api/v1/reviews/{id}/reply</code> (staff reply).</div>
+      <div id="logRev" class="log"></div>
+    </div>
+  </div>
+</div>
+
+<div class="flash" id="flash"></div>
+
+<script>
+const API_BASE = location.origin + '/api/v1/';
+document.getElementById('apiBase').textContent = API_BASE;
+document.getElementById('cfgBase').textContent = API_BASE;
+
+let cache = { bookings: [], reviews: [], log: [] };
+let currentTab = 'msg';
+
+function flash(msg){ const f=document.getElementById('flash'); f.textContent=msg; f.classList.add('show'); setTimeout(()=>f.classList.remove('show'),1800); }
+function copyBase(){ navigator.clipboard.writeText('channex.url='+API_BASE).then(()=>flash('Copied config')); }
+function showTab(t){
+  currentTab=t;
+  document.getElementById('pane-msg').style.display = t==='msg'?'grid':'none';
+  document.getElementById('pane-rev').style.display = t==='rev'?'grid':'none';
+  document.getElementById('tab-msg').classList.toggle('active',t==='msg');
+  document.getElementById('tab-rev').classList.toggle('active',t==='rev');
+}
+
+async function api(path, opts){ const r = await fetch(path, opts); return r.json(); }
+
+async function sendMessage(){
+  const booking_id = document.getElementById('msgBooking').value.trim();
+  const message = document.getElementById('msgText').value.trim();
+  if(!booking_id || !message){ flash('Booking ID and message required'); return; }
+  const res = await api('/mock/send-message', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      booking_id, message,
+      ez_message_url: document.getElementById('ezUrl').value.trim(),
+      property_id: document.getElementById('propertyId').value.trim(),
+    })
+  });
+  if(res.error){ flash(res.error); return; }
+  const w = res.webhook || {};
+  flash('Webhook → ' + (w.status||'?') + (w.ok?' OK':''));
+  document.getElementById('msgText').value='';
+  document.getElementById('threadPicker').value = booking_id;
+  await refresh(); renderThread();
+}
+
+let scoreRows = [{category:'clean',score:9},{category:'comfort',score:8.5}];
+function renderScores(){
+  document.getElementById('scores').innerHTML = scoreRows.map((s,i)=>`
+    <div class="scores-row" style="margin-top:6px">
+      <input value="${s.category}" onchange="scoreRows[${i}].category=this.value" placeholder="category">
+      <input type="number" step="0.1" min="0" max="10" value="${s.score}" onchange="scoreRows[${i}].score=this.value" placeholder="score">
+      <button class="ghost sm" style="flex:0 0 auto" onclick="scoreRows.splice(${i},1);renderScores()">✕</button>
+    </div>`).join('');
+}
+function addScore(){ scoreRows.push({category:'',score:8}); renderScores(); }
+
+async function createReview(){
+  const booking_id = document.getElementById('revBooking').value.trim();
+  const property_id = document.getElementById('revProperty').value.trim() || document.getElementById('propertyId').value.trim();
+  if(!booking_id || !property_id){ flash('Booking ID and Property ID required'); return; }
+  const res = await api('/mock/reviews', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      booking_id, property_id,
+      guest_name: document.getElementById('revGuest').value,
+      ota: document.getElementById('revOta').value,
+      overall_score: document.getElementById('revScore').value,
+      ota_reservation_id: document.getElementById('revResId').value,
+      content: document.getElementById('revContent').value,
+      scores: scoreRows.filter(s=>s.category),
+    })
+  });
+  if(res.error){ flash(res.error); return; }
+  flash('Review created'); document.getElementById('revContent').value='';
+  await refresh();
+}
+
+async function resetState(){
+  if(!confirm('Clear all mock messages, reviews and the log?')) return;
+  await api('/mock/reset',{method:'POST'}); await refresh(); renderThread(); flash('Mock reset');
+}
+
+async function refresh(){
+  cache = await api('/mock/state');
+  // thread picker
+  const picker = document.getElementById('threadPicker');
+  const prev = picker.value;
+  picker.innerHTML = cache.bookings.length
+    ? cache.bookings.map(b=>`<option value="${b.booking_id}">${b.booking_id} (${b.messages.length})</option>`).join('')
+    : '<option value="">— no conversations —</option>';
+  if([...picker.options].some(o=>o.value===prev)) picker.value=prev;
+  renderThread(); renderReviews(); renderLog();
+}
+
+function renderThread(){
+  const id = document.getElementById('threadPicker').value;
+  const b = cache.bookings.find(x=>x.booking_id===id);
+  const el = document.getElementById('thread');
+  if(!b || !b.messages.length){ el.innerHTML='<div class="empty">No messages yet.</div>'; return; }
+  el.innerHTML = b.messages.map(m=>`
+    <div class="bubble ${m.sender==='guest'?'guest':'staff'}">
+      ${escapeHtml(m.message)}
+      <span class="meta">${m.sender==='guest'?'Guest':'Property (staff)'} · ${fmt(m.inserted_at)}</span>
+    </div>`).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function renderReviews(){
+  const el = document.getElementById('reviews');
+  if(!cache.reviews.length){ el.innerHTML='<div class="empty">No reviews yet.</div>'; return; }
+  el.innerHTML = cache.reviews.map(r=>{
+    const a=r.attributes;
+    return `<div class="review">
+      <div class="top">
+        <span class="score">${a.overall_score}</span>
+        <strong>${escapeHtml(a.guest_name)}</strong>
+        <span class="chip">${a.ota}</span>
+        <span class="spacer" style="flex:1"></span>
+        <span class="badge ${a.is_replied?'replied':'pending'}">${a.is_replied?'REPLIED':'AWAITING REPLY'}</span>
+      </div>
+      <div style="margin:8px 0 4px">${escapeHtml(a.content)}</div>
+      <div>${(a.scores||[]).map(s=>`<span class="chip">${escapeHtml(s.category)}: ${s.score}</span>`).join('')}</div>
+      ${a.is_replied?`<div class="reply"><strong>Staff reply:</strong> ${escapeHtml(a.reply||'')}</div>`:''}
+      <div class="hint" style="margin-top:6px">review id: ${r.id}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderLog(){
+  const html = (cache.log||[]).map(e=>`
+    <div class="item" onclick="toggle('${e.id}')">
+      <div><span class="d-${e.direction}">${dirLabel(e.direction)}</span> ${escapeHtml(e.summary)}</div>
+      <div class="t">${new Date(e.at).toLocaleTimeString()}</div>
+      <pre id="pre-${e.id}" style="display:none">${escapeHtml(e.detail||'(no detail)')}</pre>
+    </div>`).join('') || '<div class="empty">No activity yet.</div>';
+  document.getElementById('logMsg').innerHTML = html;
+  document.getElementById('logRev').innerHTML = html;
+}
+function toggle(id){ document.querySelectorAll('#pre-'+id).forEach(p=>{ p.style.display = p.style.display==='none'?'block':'none'; }); }
+function dirLabel(d){ return d==='webhook-out'?'→ WEBHOOK':d==='api-in'?'← API':'· MOCK'; }
+
+function fmt(t){ if(!t) return ''; return String(t).replace('T',' ').slice(0,19); }
+function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+renderScores();
+refresh();
+setInterval(refresh, 2500); // live-refresh so staff replies / callbacks appear
+</script>
+</body>
+</html>
