@@ -28,6 +28,19 @@ const crypto = require('crypto');
 const PORT = process.env.PORT || 4000;
 const INDEX = path.join(__dirname, 'index.html');
 
+// ---------------------------------------------------------------------------
+// Optional auth (for public/shared deploys). All OFF by default so local dev
+// is unaffected — set the env vars only when you expose the mock.
+//   MOCK_API_KEY      gate on /api/v1/* — incoming `user-api-key` must equal it
+//                     (this is the value you also set as ezMessage's channex.api-key).
+//   MOCK_UI_USER      Basic-auth username for the UI + /mock/* (default "admin").
+//   MOCK_UI_PASSWORD  Basic-auth password for the UI + /mock/* — empty = UI open.
+// `/healthz` is always public so platform health checks pass.
+// ---------------------------------------------------------------------------
+const API_KEY = process.env.MOCK_API_KEY || '';
+const UI_USER = process.env.MOCK_UI_USER || 'admin';
+const UI_PASSWORD = process.env.MOCK_UI_PASSWORD || '';
+
 const uuid = () => crypto.randomUUID();
 
 // Channex timestamp format: ISO local date-time, 6 fractional digits, NO 'Z'.
@@ -146,6 +159,32 @@ function readBody(req) {
   });
 }
 
+// Channex-style API-key gate for /api/v1/* (real Channex 401s on a bad key too).
+// Off when MOCK_API_KEY is unset. ezMessage sends channex.api-key as `user-api-key`.
+function checkApiKey(res, apiKey) {
+  if (!API_KEY || apiKey === API_KEY) return true;
+  sendJson(res, 401, { errors: { title: 'Unauthorized', detail: 'Invalid user-api-key' } });
+  return false;
+}
+
+// HTTP Basic auth for the human-facing UI + /mock/* control endpoints.
+// Off when MOCK_UI_PASSWORD is unset. Once the browser authenticates the page
+// load, it auto-attaches the credentials to same-origin /mock/* fetches.
+function checkUi(req, res) {
+  if (!UI_PASSWORD) return true;
+  const h = req.headers['authorization'] || '';
+  if (h.startsWith('Basic ')) {
+    const [user, pass] = Buffer.from(h.slice(6), 'base64').toString('utf8').split(':');
+    if (user === UI_USER && pass === UI_PASSWORD) return true;
+  }
+  res.writeHead(401, {
+    'WWW-Authenticate': 'Basic realm="Mock Channex", charset="UTF-8"',
+    'Content-Type': 'text/plain', ...CORS,
+  });
+  res.end('Authentication required');
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Fire the message webhook to ezMessage (server-side, so no browser CORS issue).
 // ---------------------------------------------------------------------------
@@ -239,8 +278,14 @@ const server = http.createServer(async (req, res) => {
 
   if (method === 'OPTIONS') { res.writeHead(204, CORS); return res.end(); }
 
+  // ---- Health check (always public, so platform probes pass under auth) ---
+  if (method === 'GET' && u.pathname === '/healthz') {
+    return sendJson(res, 200, { status: 'ok' });
+  }
+
   // ---- UI ----------------------------------------------------------------
   if (method === 'GET' && (u.pathname === '/' || u.pathname === '/index.html')) {
+    if (!checkUi(req, res)) return;
     fs.readFile(INDEX, (err, buf) => {
       if (err) { res.writeHead(500); return res.end('index.html not found'); }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...CORS });
@@ -250,6 +295,9 @@ const server = http.createServer(async (req, res) => {
   }
 
   const apiKey = req.headers['user-api-key'] || null;
+
+  // API-key gate for everything under /api/v1/* (ezMessage's callbacks).
+  if (parts[0] === 'api' && !checkApiKey(res, apiKey)) return;
 
   // ===== Channex API (what ezMessage calls back to) =======================
   // GET  /api/v1/bookings/:id/messages
@@ -384,6 +432,7 @@ const server = http.createServer(async (req, res) => {
 
   // ===== Mock control endpoints (used by the UI, same-origin) =============
   if (parts[0] === 'mock') {
+    if (!checkUi(req, res)) return;
     if (parts[1] === 'state' && method === 'GET') {
       const bookings = [...state.bookings.entries()].map(([id, b]) => ({
         booking_id: id, thread_id: b.thread_id, messages: b.messages,
@@ -468,5 +517,8 @@ server.listen(PORT, () => {
   console.log('');
   console.log('  Guest-message webhook is fired to the "ezMessage URL"');
   console.log('  set in the UI (default http://localhost:8080).');
+  console.log('  ---------------------------------------------------------');
+  console.log(`  Auth: /api/v1/* ${API_KEY ? 'REQUIRES user-api-key' : 'OPEN (set MOCK_API_KEY)'}`
+    + `  |  UI ${UI_PASSWORD ? `Basic-auth as "${UI_USER}"` : 'OPEN (set MOCK_UI_PASSWORD)'}`);
   console.log('  ---------------------------------------------------------');
 });

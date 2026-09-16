@@ -134,12 +134,22 @@ docker run -p 4000:4000 mock-channex
 ```
 
 ### ⚠️ Security when public
-A public deploy is **unauthenticated**: anyone with the URL can open the UI, inject fake
-guest messages/reviews, and — because staff replies from UAT land here — **read whatever UAT
-posts to it** (which can include guest names / PII). For a shared/UAT deploy: use a
-hard-to-guess `channex.api-key`, tear the instance down when finished, and never point it at
-data that matters. (The mock currently accepts **any** `user-api-key` by design — ask if you
-want an API-key gate on `/api/v1/*` plus a UI password added.)
+Left open, anyone with the URL can drive the UI *and* read what UAT posts to the mock (staff
+replies can carry guest names / PII). Lock a public deploy down with these env vars (all
+**off by default**, so local dev is unaffected):
+
+| Env var | Gate | Notes |
+| --- | --- | --- |
+| `MOCK_API_KEY` | `/api/v1/*` — ezMessage's callbacks | Incoming `user-api-key` must equal it, else `401` (same as real Channex). **Set it to the same value as ezMessage's `channex.api-key`.** |
+| `MOCK_UI_PASSWORD` | The UI (`/`) + `/mock/*` control endpoints | HTTP Basic auth. The browser prompts once on page load, then reuses it. |
+| `MOCK_UI_USER` | — | Basic-auth username (default `admin`). |
+
+`GET /healthz` stays public so platform health checks pass. Example:
+```bash
+MOCK_API_KEY=s3cr3t-key MOCK_UI_PASSWORD=hunter2 node server.js
+# ezMessage: channex.api-key=s3cr3t-key ; UI login: admin / hunter2
+```
+Still: tear the instance down when finished, and don't point it at data that matters.
 
 ## Notes / limitations
 
