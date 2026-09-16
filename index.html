@@ -237,6 +237,7 @@ async function createReview(){
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
       booking_id, property_id,
+      ez_message_url: document.getElementById('ezUrl').value.trim(),
       guest_name: document.getElementById('revGuest').value,
       ota: document.getElementById('revOta').value,
       overall_score: document.getElementById('revScore').value,
