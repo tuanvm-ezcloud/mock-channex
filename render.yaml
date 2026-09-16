@@ -1,12 +1,16 @@
 # Render Blueprint for the Mock Channex server.
 # Use: Render dashboard → New → Blueprint → pick this repo. Or create a Web Service
-# manually with Root Directory = mock-channex, Runtime = Docker, Plan = Free.
+# manually with Runtime = Docker, Plan = Free (repo root is the app; leave Root Directory blank).
 services:
   - type: web
     name: mock-channex
     runtime: docker
     plan: free           # spins down after ~15 min idle; in-memory state resets on cold start
-    rootDir: mock-channex
     dockerfilePath: Dockerfile
-    healthCheckPath: /mock/state   # returns 200 JSON
+    healthCheckPath: /healthz   # always-public 200 (stays reachable when auth is enabled)
     autoDeploy: true
+    # To lock down a public deploy, add these in the Render dashboard (Environment):
+    #   MOCK_API_KEY      = same value as ezMessage's channex.api-key
+    #   MOCK_UI_PASSWORD  = Basic-auth password for the UI (username: admin)
+    #   MOCK_UI_USER      = admin   (optional; overrides the default username)
+    envVars: []
