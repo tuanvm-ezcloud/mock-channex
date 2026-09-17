@@ -54,6 +54,7 @@
   .log .item{padding:8px;border-bottom:1px solid var(--line)}
   .log .ihdr{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;font-weight:600}
   .log .d-webhook-out{color:var(--brand)}
+  .log .d-extranet-out{color:#7c3aed}
   .log .d-api-in{color:var(--ok)}
   .log .d-mock{color:var(--muted)}
   .log .t{color:var(--muted);font-size:10px;margin-left:auto}
@@ -91,6 +92,19 @@
         <label>Default property_id (UUID)</label>
         <input id="propertyId" placeholder="e.g. 680585d7-af7f-4880-8e91-25fca1508b55">
         <div class="hint">The hotel's propertyId in ezMessage / CRS.</div>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Extranet URL (staff review reply — extranet.api)</label>
+        <input id="extranetUrl" value="http://localhost:8084/api/v1/ezmessage" placeholder="http://host:8084/api/v1/ezmessage" oninput="updateEzPreview()">
+        <div class="hint">Review replies go here (different service/port than the webhooks):<br>
+          → <code id="extranetPreview"></code></div>
+      </div>
+      <div>
+        <label>Extranet auth header (optional)</label>
+        <input id="extranetAuth" placeholder="Authorization: Bearer …    or    X-Test-Auth: true">
+        <div class="hint"><code>/channex/review/reply</code> is authenticated — enter one header as <code>Name: value</code>.</div>
       </div>
     </div>
     <h3>Configure ezMessage to call this mock</h3>
@@ -255,23 +269,30 @@ async function createReview(){
   await refresh();
 }
 
-// Simulate the hotel replying to a review directly on the OTA (Airbnb/Booking.com).
-// Updates the review's reply on the mock and fires an `updated_review` webhook, so
-// ezMessage re-pulls and syncs the OTA-side reply (ReviewIngestService.syncReplyComment).
-async function replyReviewOta(id){
-  const ta = document.getElementById('reply-'+id);
-  const text = (ta && ta.value || '').trim();
-  if(!text){ flash('Enter a reply first'); return; }
-  const res = await api('/mock/reviews', {
+// Reply to a review as staff, via the ezMessage EXTRANET (the real staff-reply path,
+// on a different service/URL than the webhooks). The mock server POSTs to
+// {extranetUrl}/channex/review/reply {id, content}; the extranet forwards to
+// customer.api, which POSTs the reply back to this mock — so it round-trips in.
+// `id` must be ezMessage's INTERNAL review id (the mock/Channex id can't be resolved there).
+async function replyReviewExtranet(mockReviewId){
+  const ta = document.getElementById('reply-'+mockReviewId);
+  const idEl = document.getElementById('ezid-'+mockReviewId);
+  const content = (ta && ta.value || '').trim();
+  const reviewId = (idEl && idEl.value || '').trim();
+  if(!reviewId){ flash('Enter the ezMessage review id'); if(idEl) idEl.focus(); return; }
+  if(!content){ flash('Enter a reply first'); return; }
+  const res = await api('/mock/reply-extranet', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
-      id, reply: text, event: 'updated_review',
-      ez_message_url: document.getElementById('ezUrl').value.trim(),
+      extranet_url: document.getElementById('extranetUrl').value.trim(),
+      review_id: reviewId,
+      content,
+      auth: document.getElementById('extranetAuth').value.trim(),
     })
   });
   if(res.error){ flash(res.error); return; }
-  const w = res.webhook || {};
-  flash('Reply saved → updated_review ' + (w.status!=null ? w.status : '?'));
+  const rr = res.result || {};
+  flash('Extranet reply → ' + (rr.status!=null ? rr.status : '?') + (rr.ok ? ' OK' : ''));
   await refresh();
 }
 
@@ -311,9 +332,9 @@ function renderReviews(){
   // Preserve any in-progress reply text + focus/caret across the periodic refresh
   // (the interval re-renders these cards, which would otherwise wipe what you're typing).
   const drafts = {};
-  el.querySelectorAll('textarea[id^="reply-"]').forEach(t => { drafts[t.id] = t.value; });
+  el.querySelectorAll('textarea[id^="reply-"], input[id^="ezid-"]').forEach(t => { drafts[t.id] = t.value; });
   const act = document.activeElement;
-  const activeId = act && act.id && act.id.indexOf('reply-') === 0 ? act.id : null;
+  const activeId = act && act.id && (act.id.indexOf('reply-') === 0 || act.id.indexOf('ezid-') === 0) ? act.id : null;
   const sel = activeId ? [act.selectionStart, act.selectionEnd] : null;
   el.innerHTML = cache.reviews.map(r=>{
     const a=r.attributes;
@@ -329,11 +350,12 @@ function renderReviews(){
       <div>${(a.scores||[]).map(s=>`<span class="chip">${escapeHtml(s.category)}: ${s.score}</span>`).join('')}</div>
       ${a.is_replied?`<div class="reply"><strong>Reply:</strong> ${escapeHtml(a.reply||'')}</div>`:''}
       <div style="margin-top:8px">
-        <label>Reply as the OTA (hotel replies on ${escapeHtml(a.ota||'OTA')}) — fires <code>updated_review</code> so ezMessage re-pulls &amp; syncs it</label>
+        <label>Reply as staff — POSTs to the <b>extranet</b> <code>/channex/review/reply</code>, which forwards to customer.api → back to this mock</label>
+        <input id="ezid-${r.id}" placeholder="ezMessage review id (internal UUID from ezMessage — NOT the Channex id below)">
         <textarea id="reply-${r.id}" placeholder="Cảm ơn quý khách đã đánh giá! Rất mong được đón tiếp lần sau.">${escapeHtml(a.reply||'')}</textarea>
-        <button class="ghost sm" style="margin-top:6px" onclick="replyReviewOta('${r.id}')">${a.is_replied?'Update reply':'Reply'} as OTA → fire updated_review</button>
+        <button class="ghost sm" style="margin-top:6px" onclick="replyReviewExtranet('${r.id}')">Reply as staff → POST extranet /channex/review/reply</button>
       </div>
-      <div class="hint" style="margin-top:6px">review id: ${r.id}</div>
+      <div class="hint" style="margin-top:6px">Channex review id: ${r.id}</div>
     </div>`;
   }).join('');
   // Restore in-progress drafts (only where the user typed something not yet rendered) and focus.
@@ -371,11 +393,14 @@ function renderLog(){
   document.getElementById('logMsg').innerHTML = html;
   document.getElementById('logRev').innerHTML = html;
 }
-function dirLabel(d){ return d==='webhook-out'?'→ WEBHOOK':d==='api-in'?'← API':'· MOCK'; }
+function dirLabel(d){ return d==='webhook-out'?'→ WEBHOOK':d==='api-in'?'← API':d==='extranet-out'?'→ EXTRANET':'· MOCK'; }
 function updateEzPreview(){
   const base = (document.getElementById('ezUrl').value||'').trim().replace(/\/+$/,'');
   const el = document.getElementById('ezPreview');
   if(el) el.textContent = (base||'<ezMessage URL>') + '/channex/push_message';
+  const ext = (document.getElementById('extranetUrl').value||'').trim().replace(/\/+$/,'');
+  const ee = document.getElementById('extranetPreview');
+  if(ee) ee.textContent = (ext||'<extranet URL>') + '/channex/review/reply';
 }
 
 function fmt(t){ if(!t) return ''; return String(t).replace('T',' ').slice(0,19); }

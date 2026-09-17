@@ -295,6 +295,45 @@ async function fireReviewWebhook(ezMessageBase, review, event) {
 }
 
 // ---------------------------------------------------------------------------
+// Reply to a review via the ezMessage EXTRANET (staff reply path). This is a
+// DIFFERENT service/URL than the webhooks: extranet.api POST /channex/review/reply
+// with { id, content }, where `id` is ezMessage's INTERNAL review id (not the mock/
+// Channex id) and the endpoint is authenticated. Done server-side to avoid browser
+// CORS. The extranet forwards to customer.api, which then POSTs the reply back to
+// this mock's /api/v1/reviews/{id}/reply — so the reply round-trips into the review.
+// ---------------------------------------------------------------------------
+async function fireExtranetReply(extranetBase, { reviewId, content, authHeader }) {
+  const url = extranetBase.replace(/\/+$/, '') + '/channex/review/reply';
+  const body = { id: reviewId, content };
+  const headers = { 'Content-Type': 'application/json' };
+  let authDesc = 'none';
+  if (authHeader && authHeader.includes(':')) {
+    const i = authHeader.indexOf(':');
+    const name = authHeader.slice(0, i).trim();
+    const val = authHeader.slice(i + 1).trim();
+    if (name && val) {
+      headers[name] = val;
+      authDesc = `${name}: ${val.length > 28 ? val.slice(0, 28) + '…' : val}`;
+    }
+  }
+  try {
+    const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+    let text = ''; try { text = await r.text(); } catch { /* ignore */ }
+    logEvent({
+      direction: 'extranet-out', summary: `POST ${url} → ${r.status}`,
+      method: 'POST', url, auth: authDesc, request: body, status: r.status, response: text,
+    });
+    return { ok: r.ok, status: r.status, body: text };
+  } catch (e) {
+    logEvent({
+      direction: 'extranet-out', summary: `POST ${url} → ERROR`,
+      method: 'POST', url, auth: authDesc, request: body, status: 0, response: String(e && e.message || e),
+    });
+    return { ok: false, status: 0, body: String(e && e.message || e) };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 const server = http.createServer(async (req, res) => {
@@ -518,6 +557,18 @@ const server = http.createServer(async (req, res) => {
       // C1: notify ezMessage so it pulls the review (mirrors the message flow). event defaults to 'review'.
       const webhook = await fireReviewWebhook(ezMessageBase, review, body.event);
       return sendJson(res, 200, { ok: true, review, webhook });
+    }
+
+    if (parts[1] === 'reply-extranet' && method === 'POST') {
+      const body = await readBody(req);
+      const extranetBase = (body.extranet_url || 'http://localhost:8084/api/v1/ezmessage').trim();
+      const reviewId = (body.review_id || '').trim();
+      const content = body.content || '';
+      if (!reviewId || !content) {
+        return sendJson(res, 400, { error: 'review_id (ezMessage internal review id) and content are required' });
+      }
+      const result = await fireExtranetReply(extranetBase, { reviewId, content, authHeader: (body.auth || '').trim() });
+      return sendJson(res, 200, { ok: true, result });
     }
 
     if (parts[1] === 'reset' && method === 'POST') {
