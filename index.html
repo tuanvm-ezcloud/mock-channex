@@ -84,7 +84,7 @@
     <div class="row">
       <div>
         <label>ezMessage URL (webhook target — customer.api)</label>
-        <input id="ezUrl" value="http://localhost:8080/api/v1/ezmessage" placeholder="http://host:8080/api/v1/ezmessage" oninput="updateEzPreview()">
+        <input id="ezUrl" value="https://ezone-message-customer-test1.ezcloudi.com/api/v1/ezmessage" placeholder="https://…/api/v1/ezmessage" oninput="updateEzPreview()">
         <div class="hint">Must include the context path <code>/api/v1/ezmessage</code>. Webhooks are POSTed to:<br>
           → <code id="ezPreview"></code> &nbsp;(reviews: <code>/channex/push_review</code>)</div>
       </div>
@@ -97,7 +97,7 @@
     <div class="row">
       <div>
         <label>Extranet URL (staff review reply — extranet.api)</label>
-        <input id="extranetUrl" value="http://localhost:8084/api/v1/ezmessage" placeholder="http://host:8084/api/v1/ezmessage" oninput="updateEzPreview()">
+        <input id="extranetUrl" value="https://ezone-message-test1.ezcloudi.com/api/v1/ezmessage" placeholder="https://…/api/v1/ezmessage" oninput="updateEzPreview()">
         <div class="hint">Review replies go here (different service/port than the webhooks):<br>
           → <code id="extranetPreview"></code></div>
       </div>
