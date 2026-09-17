@@ -162,7 +162,6 @@
           <div><label>Property ID (UUID)</label><input id="revProperty" placeholder="hotel propertyId"></div>
         </div>
         <div class="row">
-          <div><label>Guest name</label><input id="revGuest" value="John Guest"></div>
           <div><label>OTA</label>
             <select id="revOta">
               <option>BookingCom</option><option>Expedia</option><option>Airbnb</option>
@@ -256,7 +255,6 @@ async function createReview(){
     body: JSON.stringify({
       booking_id, property_id,
       ez_message_url: document.getElementById('ezUrl').value.trim(),
-      guest_name: document.getElementById('revGuest').value,
       ota: document.getElementById('revOta').value,
       overall_score: document.getElementById('revScore').value,
       ota_reservation_id: document.getElementById('revResId').value,
@@ -341,7 +339,7 @@ function renderReviews(){
     return `<div class="review">
       <div class="top">
         <span class="score">${a.overall_score}</span>
-        <strong>${escapeHtml(a.guest_name)}</strong>
+        <strong>${escapeHtml(a.guest_name || '(name from booking)')}</strong>
         <span class="chip">${a.ota}</span>
         <span class="spacer" style="flex:1"></span>
         <span class="badge ${a.is_replied?'replied':'pending'}">${a.is_replied?'REPLIED':'AWAITING REPLY'}</span>

@@ -124,7 +124,7 @@ function makeReview({ content, guest_name, ota, ota_reservation_id, overall_scor
     attributes: {
       id: undefined, // filled below to equal top-level id
       content: content || '',
-      guest_name: guest_name || 'Guest',
+      guest_name: guest_name || null,   // ezMessage resolves the name from the booking's customer
       ota: ota || 'BookingCom',
       ota_reservation_id: ota_reservation_id || '',
       overall_score: Number(overall_score) || 0,
@@ -247,24 +247,46 @@ async function fireMessageWebhook(ezMessageBase, { bookingId, message, propertyI
 
 // ---------------------------------------------------------------------------
 // Fire the review webhook to ezMessage (C1). Channex sends 'review' / 'updated_review';
-// ezMessage treats it as a trigger to pull GET /api/v1/reviews, so the payload is minimal.
+// ezMessage treats it as a trigger to pull GET /api/v1/reviews, so it only reads the
+// event + top-level property_id. We still emit the FULL Channex payload shape (all 23
+// fields) so the log is faithful — content/raw_content/reviewer_name are null just like
+// the real Channex webhook (that data comes from the GET /reviews resource).
 // ---------------------------------------------------------------------------
 async function fireReviewWebhook(ezMessageBase, review, event) {
   const url = ezMessageBase.replace(/\/+$/, '') + '/channex/push_review';
   const rel = review.relationships || {};
+  const a = review.attributes || {};
   const bookingId = rel.booking && rel.booking.data ? rel.booking.data.id : null;
   const propertyId = rel.property && rel.property.data ? rel.property.data.id : null;
+  const channelId = rel.channel && rel.channel.data ? rel.channel.data.id : null;
+  const scores = (a.scores || []).map(s => ({ category: s.category, score: s.score }));
+  const replyText = typeof a.reply === 'string' ? a.reply : null;
   const payload = {
     event: event || 'review',
     payload: {
       id: review.id,
-      booking_id: bookingId,
+      reply: replyText,
+      content: null,                     // Channex sends null in the webhook; text is on GET /reviews
+      channel_id: channelId,
+      scores,
+      ota: a.ota != null ? a.ota : null,
       property_id: propertyId,
-      overall_score: review.attributes ? review.attributes.overall_score : 0,
-      ota: review.attributes ? review.attributes.ota : null,
-      is_hidden: false,
-      is_replied: false,
-      received_at: channexTime(),
+      expired_at: null,
+      is_hidden: !!a.is_hidden,
+      is_replied: !!a.is_replied,
+      ota_overall_score: a.overall_score != null ? a.overall_score : 0,
+      ota_reservation_id: a.ota_reservation_id != null ? a.ota_reservation_id : null,
+      ota_review_id: null,
+      ota_scores: scores,
+      overall_score: a.overall_score != null ? a.overall_score : 0,
+      raw_content: null,
+      received_at: a.received_at || channexTime(),
+      reviewer_name: null,               // guest name is resolved by ezMessage from the booking
+      booking_id: bookingId,
+      live_feed_event_id: uuid(),
+      ota_inserted_at: null,
+      reply_scheduled_at: null,
+      reply_sent_at: null,
     },
     property_id: propertyId,
     user_id: null,
