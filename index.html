@@ -50,13 +50,16 @@
   .badge{font-size:10px;padding:2px 7px;border-radius:20px;font-weight:700}
   .badge.replied{background:#dcfce7;color:var(--ok)}
   .badge.pending{background:#fef3c7;color:var(--warn)}
-  .log{font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;max-height:340px;overflow:auto}
-  .log .item{padding:6px 8px;border-bottom:1px solid var(--line);cursor:pointer}
-  .log .item:hover{background:#fafbfe}
+  .log{font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;max-height:75vh;overflow:auto}
+  .log .item{padding:8px;border-bottom:1px solid var(--line)}
+  .log .ihdr{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;font-weight:600}
   .log .d-webhook-out{color:var(--brand)}
   .log .d-api-in{color:var(--ok)}
   .log .d-mock{color:var(--muted)}
-  .log .t{color:var(--muted);font-size:10px}
+  .log .t{color:var(--muted);font-size:10px;margin-left:auto}
+  .log .lr{margin-top:4px}
+  .log .lk{display:inline-block;min-width:62px;color:var(--muted);font-weight:600}
+  .log .lv{color:var(--ink);word-break:break-all}
   .log pre{background:#0f172a;color:#e2e8f0;padding:10px;border-radius:8px;overflow:auto;white-space:pre-wrap;font-size:11px;margin:6px 0 0}
   .kv{font:12px/1.6 ui-monospace,Menlo,Consolas,monospace;background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
   .copy{float:right}
@@ -80,8 +83,9 @@
     <div class="row">
       <div>
         <label>ezMessage URL (webhook target — customer.api)</label>
-        <input id="ezUrl" value="http://localhost:8080">
-        <div class="hint">Guest messages are POSTed to <code>&lt;this&gt;/channex/push_message</code></div>
+        <input id="ezUrl" value="http://localhost:8080/api/v1/ezmessage" placeholder="http://host:8080/api/v1/ezmessage" oninput="updateEzPreview()">
+        <div class="hint">Must include the context path <code>/api/v1/ezmessage</code>. Webhooks are POSTed to:<br>
+          → <code id="ezPreview"></code> &nbsp;(reviews: <code>/channex/push_review</code>)</div>
       </div>
       <div>
         <label>Default property_id (UUID)</label>
@@ -129,7 +133,7 @@
     </div>
     <div class="card">
       <h2>Activity log</h2>
-      <div class="hint" style="margin-bottom:8px">Outgoing webhooks + incoming Channex-API callbacks. Click an entry for the payload.</div>
+      <div class="hint" style="margin-bottom:8px">Outgoing webhooks + incoming Channex-API callbacks — full URL, request, response &amp; auth shown for each.</div>
       <div id="logMsg" class="log"></div>
     </div>
   </div>
@@ -302,23 +306,42 @@ function renderReviews(){
   }).join('');
 }
 
+function fmtVal(v){
+  if(v==null) return '';
+  if(typeof v==='string') return v;
+  try{ return JSON.stringify(v,null,2); }catch{ return String(v); }
+}
 function renderLog(){
-  const html = (cache.log||[]).map(e=>`
-    <div class="item" onclick="toggle('${e.id}')">
-      <div><span class="d-${e.direction}">${dirLabel(e.direction)}</span> ${escapeHtml(e.summary)}</div>
-      <div class="t">${new Date(e.at).toLocaleTimeString()}</div>
-      <pre id="pre-${e.id}" style="display:none">${escapeHtml(e.detail||'(no detail)')}</pre>
-    </div>`).join('') || '<div class="empty">No activity yet.</div>';
+  // Always expanded — full URL, auth, request and response for every call; no collapsing.
+  const html = (cache.log||[]).map(e=>{
+    const rows = [];
+    if(e.url)  rows.push(`<div class="lr"><span class="lk">URL</span> <span class="lv">${escapeHtml((e.method?e.method+' ':'')+e.url)}</span></div>`);
+    if(e.auth) rows.push(`<div class="lr"><span class="lk">Auth</span> <span class="lv">${escapeHtml(e.auth)}</span></div>`);
+    const reqStr = fmtVal(e.request);
+    if(reqStr) rows.push(`<div class="lr"><span class="lk">Request</span></div><pre>${escapeHtml(reqStr)}</pre>`);
+    const respStr = fmtVal(e.response);
+    if(e.status!=null || respStr) rows.push(`<div class="lr"><span class="lk">Response</span>${e.status!=null?' <span class="lv">('+e.status+')</span>':''}</div>${respStr?`<pre>${escapeHtml(respStr)}</pre>`:''}`);
+    if(e.note) rows.push(`<pre>${escapeHtml(e.note)}</pre>`);
+    return `<div class="item">
+      <div class="ihdr"><span class="d-${e.direction}">${dirLabel(e.direction)}</span> <span>${escapeHtml(e.summary)}</span><span class="t">${new Date(e.at).toLocaleTimeString()}</span></div>
+      ${rows.join('')}
+    </div>`;
+  }).join('') || '<div class="empty">No activity yet.</div>';
   document.getElementById('logMsg').innerHTML = html;
   document.getElementById('logRev').innerHTML = html;
 }
-function toggle(id){ document.querySelectorAll('#pre-'+id).forEach(p=>{ p.style.display = p.style.display==='none'?'block':'none'; }); }
 function dirLabel(d){ return d==='webhook-out'?'→ WEBHOOK':d==='api-in'?'← API':'· MOCK'; }
+function updateEzPreview(){
+  const base = (document.getElementById('ezUrl').value||'').trim().replace(/\/+$/,'');
+  const el = document.getElementById('ezPreview');
+  if(el) el.textContent = (base||'<ezMessage URL>') + '/channex/push_message';
+}
 
 function fmt(t){ if(!t) return ''; return String(t).replace('T',' ').slice(0,19); }
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 renderScores();
+updateEzPreview();
 refresh();
 setInterval(refresh, 2500); // live-refresh so staff replies / callbacks appear
 </script>

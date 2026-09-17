@@ -62,15 +62,27 @@ const state = {
   log: [],                     // activity log shown in the UI
 };
 
-function logEvent(direction, summary, detail) {
-  state.log.unshift({
-    id: uuid(),
-    at: new Date().toISOString(),
-    direction,               // 'webhook-out' | 'api-in' | 'mock'
-    summary,
-    detail: detail || null,
-  });
+// A log entry carries structured fields so the UI can show the full URL, request,
+// response and auth for every call: { direction, summary, method, url, auth,
+// request, status, response, note }. All optional except direction + summary.
+function logEvent(rec) {
+  state.log.unshift({ id: uuid(), at: new Date().toISOString(), ...rec });
   if (state.log.length > 200) state.log.length = 200;
+}
+
+// Convenience for inbound Channex-API calls: auto-captures method/url/auth from req.
+function logApi(req, summary, status, extra) {
+  const host = req.headers.host ? 'http://' + req.headers.host : '';
+  logEvent({
+    direction: 'api-in',
+    summary,
+    method: (req.method || '').toUpperCase(),
+    url: host + req.url,
+    auth: `user-api-key: ${req.headers['user-api-key'] || '(none)'}` + (API_KEY ? '' : '   (gate off)'),
+    request: extra && 'request' in extra ? extra.request : null,
+    status,
+    response: extra && 'response' in extra ? extra.response : null,
+  });
 }
 
 function getBooking(bookingId) {
@@ -217,11 +229,18 @@ async function fireMessageWebhook(ezMessageBase, { bookingId, message, propertyI
     });
     let text = '';
     try { text = await r.text(); } catch { /* ignore */ }
-    logEvent('webhook-out', `POST ${url} → ${r.status}`,
-      `payload:\n${JSON.stringify(payload, null, 2)}\n\nresponse (${r.status}):\n${text}`);
+    logEvent({
+      direction: 'webhook-out', summary: `POST ${url} → ${r.status}`,
+      method: 'POST', url, auth: 'none (outbound webhook — no user-api-key sent)',
+      request: payload, status: r.status, response: text,
+    });
     return { ok: r.ok, status: r.status, body: text };
   } catch (e) {
-    logEvent('webhook-out', `POST ${url} → ERROR`, String(e && e.message || e));
+    logEvent({
+      direction: 'webhook-out', summary: `POST ${url} → ERROR`,
+      method: 'POST', url, auth: 'none (outbound webhook — no user-api-key sent)',
+      request: payload, status: 0, response: String(e && e.message || e),
+    });
     return { ok: false, status: 0, body: String(e && e.message || e) };
   }
 }
@@ -259,11 +278,18 @@ async function fireReviewWebhook(ezMessageBase, review, event) {
     });
     let text = '';
     try { text = await r.text(); } catch { /* ignore */ }
-    logEvent('webhook-out', `POST ${url} → ${r.status}`,
-      `payload:\n${JSON.stringify(payload, null, 2)}\n\nresponse (${r.status}):\n${text}`);
+    logEvent({
+      direction: 'webhook-out', summary: `POST ${url} → ${r.status}`,
+      method: 'POST', url, auth: 'none (outbound webhook — no user-api-key sent)',
+      request: payload, status: r.status, response: text,
+    });
     return { ok: r.ok, status: r.status, body: text };
   } catch (e) {
-    logEvent('webhook-out', `POST ${url} → ERROR`, String(e && e.message || e));
+    logEvent({
+      direction: 'webhook-out', summary: `POST ${url} → ERROR`,
+      method: 'POST', url, auth: 'none (outbound webhook — no user-api-key sent)',
+      request: payload, status: 0, response: String(e && e.message || e),
+    });
     return { ok: false, status: 0, body: String(e && e.message || e) };
   }
 }
@@ -307,12 +333,12 @@ const server = http.createServer(async (req, res) => {
     const booking = getBooking(bookingId);
 
     if (method === 'GET') {
-      logEvent('api-in', `GET /api/v1/bookings/${bookingId}/messages → 200 (${booking.messages.length} msgs)`,
-        `user-api-key: ${apiKey || '(none)'}`);
-      return sendJson(res, 200, {
+      const out = {
         data: booking.messages.map(m => messageResource(bookingId, m)),
         meta: { limit: 100, page: 1, total: booking.messages.length },
-      });
+      };
+      logApi(req, `GET /api/v1/bookings/${bookingId}/messages → 200 (${booking.messages.length} msgs)`, 200, { response: out });
+      return sendJson(res, 200, out);
     }
 
     if (method === 'POST') {
@@ -332,9 +358,9 @@ const server = http.createServer(async (req, res) => {
         attachments, inserted_at: now, updated_at: now,
       };
       booking.messages.push(m);
-      logEvent('api-in', `POST /api/v1/bookings/${bookingId}/messages → 201 (staff reply)`,
-        `user-api-key: ${apiKey || '(none)'}\nbody:\n${JSON.stringify(body, null, 2)}`);
-      return sendJson(res, 201, { data: messageResource(bookingId, m) });
+      const out = { data: messageResource(bookingId, m) };
+      logApi(req, `POST /api/v1/bookings/${bookingId}/messages → 201 (staff reply)`, 201, { request: body, response: out });
+      return sendJson(res, 201, out);
     }
   }
 
@@ -344,8 +370,9 @@ const server = http.createServer(async (req, res) => {
     const a = body.attachment || {};
     const id = uuid();
     state.attachments.set(id, { file_name: a.file_name || 'file', file_type: a.file_type || 'application/octet-stream' });
-    logEvent('api-in', `POST /api/v1/attachments → 201 (${a.file_name || 'file'})`, `user-api-key: ${apiKey || '(none)'}`);
-    return sendJson(res, 201, { data: { id, type: 'attachment', attributes: { file_name: a.file_name, file_type: a.file_type } } });
+    const out = { data: { id, type: 'attachment', attributes: { file_name: a.file_name, file_type: a.file_type } } };
+    logApi(req, `POST /api/v1/attachments → 201 (${a.file_name || 'file'})`, 201, { request: body, response: out });
+    return sendJson(res, 201, out);
   }
 
   // GET  /api/v1/reviews  (JSON:API pagination: pagination[page]/[limit] default 10; filter[property_id] = C9)
@@ -355,8 +382,9 @@ const server = http.createServer(async (req, res) => {
     const propFilter = u.searchParams.get('filter[property_id]');
     // C8 sim: a property whose id starts with "noapp" has no Messages & Reviews app → Channex 403.
     if (propFilter && propFilter.startsWith('noapp')) {
-      logEvent('api-in', `GET /api/v1/reviews filter[property_id]=${propFilter} → 403 (app not installed)`, `user-api-key: ${apiKey || '(none)'}`);
-      return sendJson(res, 403, { errors: { title: 'Forbidden', detail: 'Messages & Reviews application is not installed' } });
+      const out = { errors: { title: 'Forbidden', detail: 'Messages & Reviews application is not installed' } };
+      logApi(req, `GET /api/v1/reviews filter[property_id]=${propFilter} → 403 (app not installed)`, 403, { response: out });
+      return sendJson(res, 403, out);
     }
     // stamp attributes.id == top-level id (Channex does this); newest first (state.reviews is unshift-ed)
     let all = state.reviews.map(r => ({ ...r, attributes: { ...r.attributes, id: r.id } }));
@@ -366,8 +394,9 @@ const server = http.createServer(async (req, res) => {
     }
     const start = (page - 1) * limit;
     const data = all.slice(start, start + limit);
-    logEvent('api-in', `GET /api/v1/reviews?page=${page}&limit=${limit}${propFilter ? ' filter[property_id]=' + propFilter : ''} → 200 (${data.length}/${all.length})`, `user-api-key: ${apiKey || '(none)'}`);
-    return sendJson(res, 200, { data, meta: { limit, page, total: all.length } });
+    const out = { data, meta: { limit, page, total: all.length } };
+    logApi(req, `GET /api/v1/reviews?page=${page}&limit=${limit}${propFilter ? ' filter[property_id]=' + propFilter : ''} → 200 (${data.length}/${all.length})`, 200, { response: out });
+    return sendJson(res, 200, out);
   }
 
   // GET  /api/v1/scores/:property_id  and  /api/v1/scores/:property_id/detailed  (C4)
@@ -402,8 +431,9 @@ const server = http.createServer(async (req, res) => {
         },
       }));
     }
-    logEvent('api-in', `GET /api/v1/scores/${propertyId}${detailed ? '/detailed' : ''} → 200 (${count} reviews)`, `user-api-key: ${apiKey || '(none)'}`);
-    return sendJson(res, 200, { data: { id: attributes.id, type: 'score', attributes, relationships } });
+    const out = { data: { id: attributes.id, type: 'score', attributes, relationships } };
+    logApi(req, `GET /api/v1/scores/${propertyId}${detailed ? '/detailed' : ''} → 200 (${count} reviews)`, 200, { response: out });
+    return sendJson(res, 200, out);
   }
 
   // POST /api/v1/reviews/:id/reply
@@ -413,21 +443,22 @@ const server = http.createServer(async (req, res) => {
     const replyText = body && body.reply && body.reply.reply;
     const review = state.reviews.find(r => r.id === reviewId);
     if (!review) {
-      logEvent('api-in', `POST /api/v1/reviews/${reviewId}/reply → 404 (unknown review)`, JSON.stringify(body));
-      return sendJson(res, 404, { errors: { title: 'Not Found' } });
+      const out = { errors: { title: 'Not Found' } };
+      logApi(req, `POST /api/v1/reviews/${reviewId}/reply → 404 (unknown review)`, 404, { request: body, response: out });
+      return sendJson(res, 404, out);
     }
     review.attributes.reply = replyText || '';
     review.attributes.is_replied = true;
     review.attributes.updated_at = channexTime();
-    logEvent('api-in', `POST /api/v1/reviews/${reviewId}/reply → 200 (staff reply)`,
-      `user-api-key: ${apiKey || '(none)'}\nreply: ${replyText}`);
-    return sendJson(res, 200, {
+    const out = {
       data: {
         id: review.id, type: 'review',
         attributes: { id: review.id, is_hidden: review.attributes.is_hidden, is_replied: true, reply: replyText, updated_at: review.attributes.updated_at },
         relationships: review.relationships,
       },
-    });
+    };
+    logApi(req, `POST /api/v1/reviews/${reviewId}/reply → 200 (staff reply)`, 200, { request: body, response: out });
+    return sendJson(res, 200, out);
   }
 
   // ===== Mock control endpoints (used by the UI, same-origin) =============
@@ -452,7 +483,7 @@ const server = http.createServer(async (req, res) => {
       const b = getBooking(bookingId);
       const m = { id: uuid(), sender: 'guest', message, attachments: [], inserted_at: now, updated_at: now };
       b.messages.push(m);
-      logEvent('mock', `Guest message queued for booking ${bookingId}`, message);
+      logEvent({ direction: 'mock', summary: `Guest message queued for booking ${bookingId}`, note: message });
 
       const hook = await fireMessageWebhook(ezMessageBase, {
         bookingId, message, propertyId, messageId: m.id, threadId: b.thread_id,
@@ -474,7 +505,7 @@ const server = http.createServer(async (req, res) => {
         if (body.reply !== undefined) { a.reply = body.reply; a.is_replied = !!body.reply; }
         if (body.is_hidden !== undefined) a.is_hidden = !!body.is_hidden;
         a.updated_at = channexTime();
-        logEvent('mock', `Review ${existing.id} updated`, `${a.overall_score}/10 — ${a.content || ''}${a.reply ? ' | reply: ' + a.reply : ''}`);
+        logEvent({ direction: 'mock', summary: `Review ${existing.id} updated`, note: `${a.overall_score}/10 — ${a.content || ''}${a.reply ? ' | reply: ' + a.reply : ''}` });
         const webhook = await fireReviewWebhook(ezMessageBase, existing, body.event || 'updated_review');
         return sendJson(res, 200, { ok: true, review: existing, webhook });
       }
@@ -483,7 +514,7 @@ const server = http.createServer(async (req, res) => {
       }
       const review = makeReview(body);
       state.reviews.unshift(review);
-      logEvent('mock', `Guest review created for booking ${body.booking_id}`, `${body.overall_score}/10 — ${body.content || ''}`);
+      logEvent({ direction: 'mock', summary: `Guest review created for booking ${body.booking_id}`, note: `${body.overall_score}/10 — ${body.content || ''}` });
       // C1: notify ezMessage so it pulls the review (mirrors the message flow). event defaults to 'review'.
       const webhook = await fireReviewWebhook(ezMessageBase, review, body.event);
       return sendJson(res, 200, { ok: true, review, webhook });
@@ -494,7 +525,7 @@ const server = http.createServer(async (req, res) => {
       state.reviews.length = 0;
       state.attachments.clear();
       state.log.length = 0;
-      logEvent('mock', 'State reset', null);
+      logEvent({ direction: 'mock', summary: 'State reset' });
       return sendJson(res, 200, { ok: true });
     }
   }
