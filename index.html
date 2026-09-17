@@ -255,6 +255,26 @@ async function createReview(){
   await refresh();
 }
 
+// Simulate the hotel replying to a review directly on the OTA (Airbnb/Booking.com).
+// Updates the review's reply on the mock and fires an `updated_review` webhook, so
+// ezMessage re-pulls and syncs the OTA-side reply (ReviewIngestService.syncReplyComment).
+async function replyReviewOta(id){
+  const ta = document.getElementById('reply-'+id);
+  const text = (ta && ta.value || '').trim();
+  if(!text){ flash('Enter a reply first'); return; }
+  const res = await api('/mock/reviews', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      id, reply: text, event: 'updated_review',
+      ez_message_url: document.getElementById('ezUrl').value.trim(),
+    })
+  });
+  if(res.error){ flash(res.error); return; }
+  const w = res.webhook || {};
+  flash('Reply saved → updated_review ' + (w.status!=null ? w.status : '?'));
+  await refresh();
+}
+
 async function resetState(){
   if(!confirm('Clear all mock messages, reviews and the log?')) return;
   await api('/mock/reset',{method:'POST'}); await refresh(); renderThread(); flash('Mock reset');
@@ -288,6 +308,13 @@ function renderThread(){
 function renderReviews(){
   const el = document.getElementById('reviews');
   if(!cache.reviews.length){ el.innerHTML='<div class="empty">No reviews yet.</div>'; return; }
+  // Preserve any in-progress reply text + focus/caret across the periodic refresh
+  // (the interval re-renders these cards, which would otherwise wipe what you're typing).
+  const drafts = {};
+  el.querySelectorAll('textarea[id^="reply-"]').forEach(t => { drafts[t.id] = t.value; });
+  const act = document.activeElement;
+  const activeId = act && act.id && act.id.indexOf('reply-') === 0 ? act.id : null;
+  const sel = activeId ? [act.selectionStart, act.selectionEnd] : null;
   el.innerHTML = cache.reviews.map(r=>{
     const a=r.attributes;
     return `<div class="review">
@@ -300,10 +327,24 @@ function renderReviews(){
       </div>
       <div style="margin:8px 0 4px">${escapeHtml(a.content)}</div>
       <div>${(a.scores||[]).map(s=>`<span class="chip">${escapeHtml(s.category)}: ${s.score}</span>`).join('')}</div>
-      ${a.is_replied?`<div class="reply"><strong>Staff reply:</strong> ${escapeHtml(a.reply||'')}</div>`:''}
+      ${a.is_replied?`<div class="reply"><strong>Reply:</strong> ${escapeHtml(a.reply||'')}</div>`:''}
+      <div style="margin-top:8px">
+        <label>Reply as the OTA (hotel replies on ${escapeHtml(a.ota||'OTA')}) — fires <code>updated_review</code> so ezMessage re-pulls &amp; syncs it</label>
+        <textarea id="reply-${r.id}" placeholder="Cảm ơn quý khách đã đánh giá! Rất mong được đón tiếp lần sau.">${escapeHtml(a.reply||'')}</textarea>
+        <button class="ghost sm" style="margin-top:6px" onclick="replyReviewOta('${r.id}')">${a.is_replied?'Update reply':'Reply'} as OTA → fire updated_review</button>
+      </div>
       <div class="hint" style="margin-top:6px">review id: ${r.id}</div>
     </div>`;
   }).join('');
+  // Restore in-progress drafts (only where the user typed something not yet rendered) and focus.
+  Object.keys(drafts).forEach(id => {
+    const t = document.getElementById(id);
+    if (t && drafts[id] !== undefined && drafts[id] !== t.value) t.value = drafts[id];
+  });
+  if (activeId) {
+    const t = document.getElementById(activeId);
+    if (t) { t.focus(); try { t.setSelectionRange(sel[0], sel[1]); } catch (e) {} }
+  }
 }
 
 function fmtVal(v){
