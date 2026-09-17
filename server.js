@@ -480,11 +480,20 @@ const server = http.createServer(async (req, res) => {
     const reviewId = parts[3];
     const body = await readBody(req);
     const replyText = body && body.reply && body.reply.reply;
-    const review = state.reviews.find(r => r.id === reviewId);
+    let review = state.reviews.find(r => r.id === reviewId);
+    let stub = false;
     if (!review) {
-      const out = { errors: { title: 'Not Found' } };
-      logApi(req, `POST /api/v1/reviews/${reviewId}/reply → 404 (unknown review)`, 404, { request: body, response: out });
-      return sendJson(res, 404, out);
+      // Lenient: the review may have been created on a previous (now-restarted) mock
+      // instance — this server's state is in-memory and resets on restart / Render
+      // spin-down — or seeded straight into ezMessage's DB. Real Channex would 404,
+      // but for testing we accept the reply anyway and auto-create a stub review so
+      // the staff-reply flow (extranet → Channex → save) isn't blocked by lost state.
+      review = makeReview({ guest_name: 'Unknown (reply-only)', ota: 'OTA', content: '' });
+      review.id = reviewId;
+      review.attributes.id = reviewId;
+      review.stub = true;
+      state.reviews.unshift(review);
+      stub = true;
     }
     review.attributes.reply = replyText || '';
     review.attributes.is_replied = true;
@@ -496,7 +505,7 @@ const server = http.createServer(async (req, res) => {
         relationships: review.relationships,
       },
     };
-    logApi(req, `POST /api/v1/reviews/${reviewId}/reply → 200 (staff reply)`, 200, { request: body, response: out });
+    logApi(req, `POST /api/v1/reviews/${reviewId}/reply → 200 (staff reply${stub ? ', stub review auto-created' : ''})`, 200, { request: body, response: out });
     return sendJson(res, 200, out);
   }
 

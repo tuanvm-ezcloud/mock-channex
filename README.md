@@ -161,3 +161,7 @@ Still: tear the instance down when finished, and don't point it at data that mat
   parser (`LocalDateTime.parse`) requires.
 - Inbound attachments are acknowledged but ezMessage v1 does not ingest them (documented in the OTA
   plan); staff outbound attachments via `attachment_id` are shown as a placeholder bubble.
+- **Review reply is lenient:** `POST /api/v1/reviews/{id}/reply` accepts a reply even for a review
+  the mock doesn't hold (state is in-memory and resets on restart / Render spin-down, and never
+  includes reviews seeded straight into ezMessage's DB). It returns `200` and auto-creates a stub
+  review so the staff-reply flow isn't blocked by lost state. Real Channex would `404` here.
