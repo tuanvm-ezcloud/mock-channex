@@ -237,22 +237,27 @@ async function sendMessage(){
 
 const REVIEW_CATEGORIES = ['clean','facilities','location','services','staff','value','accuracy','communication','checkin','comfort'];
 let scoreRows = [{category:'clean',score:9},{category:'comfort',score:8.5}];
-function catOptions(sel){
-  const opts = REVIEW_CATEGORIES.slice();
-  if(sel && !opts.includes(sel)) opts.unshift(sel); // keep any pre-existing custom value selectable
+function clamp(v){ let n = parseFloat(v); if(isNaN(n)) n = 0; return Math.min(10, Math.max(0, n)); }
+// Options for one row = this row's own value + any category not already chosen by another row.
+function catOptions(sel, usedByOthers){
+  let opts = REVIEW_CATEGORIES.filter(c => c === sel || !usedByOthers.has(c));
+  if(sel && !opts.includes(sel)) opts = [sel, ...opts]; // keep a pre-existing custom value selectable
   return opts.map(c=>`<option value="${escapeHtml(c)}"${c===sel?' selected':''}>${escapeHtml(c)}</option>`).join('');
 }
 function renderScores(){
-  document.getElementById('scores').innerHTML = scoreRows.map((s,i)=>`
-    <div class="scores-row" style="margin-top:6px">
-      <select onchange="scoreRows[${i}].category=this.value">${catOptions(s.category)}</select>
-      <input type="number" step="0.1" min="0" max="10" value="${s.score}" onchange="scoreRows[${i}].score=this.value" placeholder="score">
+  document.getElementById('scores').innerHTML = scoreRows.map((s,i)=>{
+    const usedByOthers = new Set(scoreRows.filter((_,j)=>j!==i).map(x=>x.category));
+    return `<div class="scores-row" style="margin-top:6px">
+      <select onchange="scoreRows[${i}].category=this.value;renderScores()">${catOptions(s.category, usedByOthers)}</select>
+      <input type="number" step="0.1" min="0" max="10" value="${s.score}" oninput="scoreRows[${i}].score=this.value" onchange="this.value=clamp(this.value);scoreRows[${i}].score=this.value" placeholder="score">
       <button class="ghost sm" style="flex:0 0 auto" onclick="scoreRows.splice(${i},1);renderScores()">✕</button>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 function addScore(){
   const used = new Set(scoreRows.map(s=>s.category));
-  const next = REVIEW_CATEGORIES.find(c=>!used.has(c)) || REVIEW_CATEGORIES[0];
+  const next = REVIEW_CATEGORIES.find(c=>!used.has(c));
+  if(!next){ flash('All categories added'); return; }
   scoreRows.push({category:next, score:8});
   renderScores();
 }
@@ -267,10 +272,10 @@ async function createReview(){
       booking_id, property_id,
       ez_message_url: document.getElementById('ezUrl').value.trim(),
       ota: document.getElementById('revOta').value,
-      overall_score: document.getElementById('revScore').value,
+      overall_score: clamp(document.getElementById('revScore').value),
       ota_reservation_id: document.getElementById('revResId').value,
       content: document.getElementById('revContent').value,
-      scores: scoreRows.filter(s=>s.category),
+      scores: scoreRows.filter(s=>s.category).map(s=>({category:s.category, score:clamp(s.score)})),
     })
   });
   if(res.error){ flash(res.error); return; }
