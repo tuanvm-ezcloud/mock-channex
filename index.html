@@ -66,7 +66,7 @@
   .copy{float:right}
   .flash{position:fixed;right:18px;bottom:18px;background:#12325e;color:#fff;padding:10px 16px;border-radius:8px;opacity:0;transition:.25s;pointer-events:none}
   .flash.show{opacity:1}
-  .scores-row{display:flex;gap:8px}.scores-row input{flex:1}
+  .scores-row{display:flex;gap:8px}.scores-row input,.scores-row select{flex:1}
 </style>
 </head>
 <body>
@@ -235,16 +235,27 @@ async function sendMessage(){
   await refresh(); renderThread();
 }
 
+const REVIEW_CATEGORIES = ['clean','facilities','location','services','staff','value','accuracy','communication','checkin','comfort'];
 let scoreRows = [{category:'clean',score:9},{category:'comfort',score:8.5}];
+function catOptions(sel){
+  const opts = REVIEW_CATEGORIES.slice();
+  if(sel && !opts.includes(sel)) opts.unshift(sel); // keep any pre-existing custom value selectable
+  return opts.map(c=>`<option value="${escapeHtml(c)}"${c===sel?' selected':''}>${escapeHtml(c)}</option>`).join('');
+}
 function renderScores(){
   document.getElementById('scores').innerHTML = scoreRows.map((s,i)=>`
     <div class="scores-row" style="margin-top:6px">
-      <input value="${s.category}" onchange="scoreRows[${i}].category=this.value" placeholder="category">
+      <select onchange="scoreRows[${i}].category=this.value">${catOptions(s.category)}</select>
       <input type="number" step="0.1" min="0" max="10" value="${s.score}" onchange="scoreRows[${i}].score=this.value" placeholder="score">
       <button class="ghost sm" style="flex:0 0 auto" onclick="scoreRows.splice(${i},1);renderScores()">✕</button>
     </div>`).join('');
 }
-function addScore(){ scoreRows.push({category:'',score:8}); renderScores(); }
+function addScore(){
+  const used = new Set(scoreRows.map(s=>s.category));
+  const next = REVIEW_CATEGORIES.find(c=>!used.has(c)) || REVIEW_CATEGORIES[0];
+  scoreRows.push({category:next, score:8});
+  renderScores();
+}
 
 async function createReview(){
   const booking_id = document.getElementById('revBooking').value.trim();
