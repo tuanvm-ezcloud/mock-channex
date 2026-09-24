@@ -73,12 +73,21 @@ its activity log, so you can confirm ezMessage is actually sending it.)
 | `POST` | `/api/v1/attachments` | returns `{data:{id}}` |
 | `GET`  | `/api/v1/reviews` | ezMessage pulls reviews |
 | `POST` | `/api/v1/reviews/{id}/reply` | staff review reply (`{reply:{reply}}`) |
+| `GET`  | `/api/v1/message_threads` | extranet.api's Channex check on OTA connect / reconnect |
+
+**OTA connect check.** When staff connect (or reconnect) Booking.com / Expedia / Airbnb, extranet.api
+(`ChannexConnectionService.checkChannexMessaging`) calls `GET {channex.url}message_threads` with
+`user-api-key`, so point **extranet.api**'s `channex.url` at the mock too. It only looks at the outcome:
+2xx → OK, 4xx → `CHANNEX_CHECK_FAILED`, I/O error → `NETWORK_DISCONNECTED`. The expanded **Connection**
+panel has a dropdown to pick what the mock answers (200 / 401 / 403 / drop the connection), also settable
+via `POST /mock/check-mode {"mode":"ok"|"401"|"403"|"network"}`. The CRS-mapping step of connect is
+separate (gRPC) and isn't affected by the mock.
 
 Plus the webhook it **sends**: `POST {ezMessageUrl}/channex/push_message` with
 `{event:"message", payload:{booking_id, message, sender:"guest", ...}, property_id, user_id, timestamp}`.
 
 Mock-control endpoints used by the UI (same origin): `GET /mock/state`, `POST /mock/send-message`,
-`POST /mock/reviews`, `POST /mock/reset`.
+`POST /mock/reviews`, `POST /mock/reply-extranet`, `POST /mock/check-mode`, `POST /mock/reset`.
 
 Review endpoints also honour `GET /api/v1/reviews?filter[property_id]=…&pagination[page]=…&pagination[limit]=…`
 (hotel-aware pull; a property id starting with `noapp` returns 403 to simulate the missing "Messages &

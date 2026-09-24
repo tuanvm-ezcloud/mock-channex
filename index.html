@@ -111,13 +111,26 @@
         <div class="hint"><code>/channex/review/reply</code> is authenticated — enter one header as <code>Name: value</code>.</div>
       </div>
     </div>
+    <div class="row conn-detail" hidden>
+      <div>
+        <label>OTA connect check (<code>GET /api/v1/message_threads</code>) responds with</label>
+        <select id="checkMode" onchange="setCheckMode(this.value)">
+          <option value="ok">200 OK → connect succeeds</option>
+          <option value="401">401 Unauthorized → CHANNEX_CHECK_FAILED</option>
+          <option value="403">403 app not installed → CHANNEX_CHECK_FAILED</option>
+          <option value="network">Drop connection → NETWORK_DISCONNECTED</option>
+        </select>
+        <div class="hint">extranet.api calls this on Booking.com / Expedia / Airbnb connect &amp; reconnect.</div>
+      </div>
+      <div></div>
+    </div>
     <h3 class="conn-detail" hidden>Configure ezMessage to call this mock</h3>
     <div class="kv conn-detail" hidden>
       <button class="ghost sm copy" onclick="copyBase()">copy</button>
       channex.url=<span id="cfgBase"></span><br>
       channex.api-key=&lt;any value&gt;
     </div>
-    <div class="hint conn-detail" hidden>Set these in <code>customer.api/src/main/resources/application.properties</code>, then restart it.</div>
+    <div class="hint conn-detail" hidden>Set these in <code>application.properties</code> of <b>customer.api</b> (messages, reviews) and <b>extranet.api</b> (OTA connect check), then restart.</div>
   </div>
 
   <div class="tabs">
@@ -320,6 +333,14 @@ async function replyReviewExtranet(mockReviewId){
   await refresh();
 }
 
+async function setCheckMode(mode){
+  const res = await api('/mock/check-mode', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ mode })
+  });
+  flash(res.error ? res.error : 'Connect check → ' + res.checkMode);
+  await refresh();
+}
+
 async function resetState(){
   if(!confirm('Clear all mock messages, reviews and the log?')) return;
   await api('/mock/reset',{method:'POST'}); await refresh(); renderThread(); flash('Mock reset');
@@ -334,6 +355,8 @@ async function refresh(){
     ? cache.bookings.map(b=>`<option value="${b.booking_id}">${b.booking_id} (${b.messages.length})</option>`).join('')
     : '<option value="">— no conversations —</option>';
   if([...picker.options].some(o=>o.value===prev)) picker.value=prev;
+  const cm = document.getElementById('checkMode');
+  if(cache.checkMode && document.activeElement!==cm) cm.value = cache.checkMode;
   renderThread(); renderReviews(); renderLog();
 }
 

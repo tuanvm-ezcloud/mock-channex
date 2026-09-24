@@ -60,7 +60,11 @@ const state = {
   reviews: [],                 // Channex review objects (see makeReview)
   attachments: new Map(),      // attachment_id -> {file_name, file_type}
   log: [],                     // activity log shown in the UI
+  // How GET /api/v1/message_threads answers — extranet.api's connect/reconnect check.
+  // 'ok' → 200 | '401' / '403' → CHANNEX_CHECK_FAILED | 'network' → socket dropped → NETWORK_DISCONNECTED
+  checkMode: 'ok',
 };
+const CHECK_MODES = ['ok', '401', '403', 'network'];
 
 // A log entry carries structured fields so the UI can show the full URL, request,
 // response and auth for every call: { direction, summary, method, url, auth,
@@ -425,6 +429,57 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // GET /api/v1/message_threads — extranet.api's Channex check on OTA connect/reconnect
+  // (ChannexConnectionService.checkChannexMessaging). Only the status matters to it:
+  // 2xx → OK, 4xx → CHANNEX_CHECK_FAILED, I/O error → NETWORK_DISCONNECTED.
+  if (parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'message_threads' && parts.length === 3 && method === 'GET') {
+    const mode = state.checkMode;
+    if (mode === 'network') {
+      logApi(req, 'GET /api/v1/message_threads → connection dropped (simulated network failure)', null,
+        { response: null });
+      return req.socket.destroy();
+    }
+    if (mode === '401' || mode === '403') {
+      const out = mode === '401'
+        ? { errors: { code: 'unauthorized', title: 'Unauthorized' } }
+        : { errors: { code: 'forbidden', title: 'Forbidden', detail: 'Messages & Reviews application is not installed' } };
+      logApi(req, `GET /api/v1/message_threads → ${mode} (simulated connect-check failure)`, Number(mode), { response: out });
+      return sendJson(res, Number(mode), out);
+    }
+    const page = Math.max(1, parseInt(u.searchParams.get('pagination[page]') || '1', 10) || 1);
+    const limit = Math.max(1, parseInt(u.searchParams.get('pagination[limit]') || '10', 10) || 10);
+    const propFilter = u.searchParams.get('filter[property_id]');
+    let all = [...state.bookings.entries()]
+      .filter(([, b]) => !propFilter || b.property_id === propFilter)
+      .map(([bookingId, b]) => {
+        const last = b.messages[b.messages.length - 1];
+        const first = b.messages[0];
+        return {
+          id: b.thread_id,
+          type: 'message_thread',
+          attributes: {
+            title: 'Guest',
+            is_closed: false,
+            message_count: b.messages.length,
+            provider: 'BookingCom',
+            last_message: last ? { message: last.message, sender: last.sender, attachments: last.attachments || [], inserted_at: last.inserted_at } : null,
+            last_message_received_at: last ? last.inserted_at : null,
+            inserted_at: first ? first.inserted_at : channexTime(),
+            updated_at: last ? last.updated_at : channexTime(),
+          },
+          relationships: {
+            property: { data: { id: b.property_id || null, type: 'property' } },
+            booking: { data: { id: bookingId, type: 'booking' } },
+          },
+        };
+      })
+      .sort((a, b) => (b.attributes.updated_at || '').localeCompare(a.attributes.updated_at || ''));
+    const data = all.slice((page - 1) * limit, (page - 1) * limit + limit);
+    const out = { data, meta: { limit, page, total: all.length } };
+    logApi(req, `GET /api/v1/message_threads → 200 (connect check OK, ${data.length}/${all.length} threads)`, 200, { response: out });
+    return sendJson(res, 200, out);
+  }
+
   // POST /api/v1/attachments  ->  { data: { id } }
   if (parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'attachments' && parts.length === 3 && method === 'POST') {
     const body = await readBody(req);
@@ -538,7 +593,17 @@ const server = http.createServer(async (req, res) => {
       const bookings = [...state.bookings.entries()].map(([id, b]) => ({
         booking_id: id, thread_id: b.thread_id, messages: b.messages,
       }));
-      return sendJson(res, 200, { bookings, reviews: state.reviews, log: state.log });
+      return sendJson(res, 200, { bookings, reviews: state.reviews, log: state.log, checkMode: state.checkMode });
+    }
+
+    if (parts[1] === 'check-mode' && method === 'POST') {
+      const body = await readBody(req);
+      if (!CHECK_MODES.includes(body.mode)) {
+        return sendJson(res, 400, { error: `mode must be one of ${CHECK_MODES.join(', ')}` });
+      }
+      state.checkMode = body.mode;
+      logEvent({ direction: 'mock', summary: `Connect check (GET /api/v1/message_threads) now answers: ${body.mode}` });
+      return sendJson(res, 200, { ok: true, checkMode: state.checkMode });
     }
 
     if (parts[1] === 'send-message' && method === 'POST') {
@@ -551,6 +616,7 @@ const server = http.createServer(async (req, res) => {
 
       const now = channexTime();
       const b = getBooking(bookingId);
+      if (propertyId) b.property_id = propertyId; // for GET /message_threads filter[property_id]
       const m = { id: uuid(), sender: 'guest', message, attachments: [], inserted_at: now, updated_at: now };
       b.messages.push(m);
       logEvent({ direction: 'mock', summary: `Guest message queued for booking ${bookingId}`, note: message });
