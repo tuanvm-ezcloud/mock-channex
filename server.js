@@ -58,7 +58,7 @@ const state = {
   // bookingId -> { thread_id, messages: [ {id, sender, message, attachments, inserted_at, updated_at} ] }
   bookings: new Map(),
   reviews: [],                 // Channex review objects (see makeReview)
-  attachments: new Map(),      // attachment_id -> {file_name, file_type}
+  attachments: new Map(),      // attachment_id -> {file_name, file_type, data: Buffer}
   log: [],                     // activity log shown in the UI
   // How GET /api/v1/message_threads answers — extranet.api's connect/reconnect check.
   // 'ok' → 200 | '401' / '403' → CHANNEX_CHECK_FAILED | 'network' → socket dropped → NETWORK_DISCONNECTED
@@ -204,7 +204,7 @@ function checkUi(req, res) {
 // ---------------------------------------------------------------------------
 // Fire the message webhook to ezMessage (server-side, so no browser CORS issue).
 // ---------------------------------------------------------------------------
-async function fireMessageWebhook(ezMessageBase, { bookingId, message, propertyId, messageId, threadId }) {
+async function fireMessageWebhook(ezMessageBase, { bookingId, message, propertyId, messageId, threadId, attachments = [] }) {
   const url = ezMessageBase.replace(/\/+$/, '') + '/channex/push_message';
   const payload = {
     event: 'message',
@@ -217,8 +217,8 @@ async function fireMessageWebhook(ezMessageBase, { bookingId, message, propertyI
       booking_id: bookingId,
       message_thread_id: threadId,
       live_feed_event_id: uuid(),
-      attachments: [],
-      have_attachment: false,
+      attachments,
+      have_attachment: attachments.length > 0,
       ota_message_id: uuid(),
     },
     property_id: propertyId || null,
@@ -416,7 +416,7 @@ const server = http.createServer(async (req, res) => {
       if (!text && msgIn.attachment_id) {
         const a = state.attachments.get(msgIn.attachment_id);
         text = a ? `[attachment: ${a.file_name}]` : '[attachment]';
-        attachments.push({ id: msgIn.attachment_id, ...(a || {}) });
+        attachments.push(`attachments/${msgIn.attachment_id}`); // Channex: relative link
       }
       const m = {
         id: uuid(), sender: 'property', message: text || '',
@@ -485,10 +485,33 @@ const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
     const a = body.attachment || {};
     const id = uuid();
-    state.attachments.set(id, { file_name: a.file_name || 'file', file_type: a.file_type || 'application/octet-stream' });
+    state.attachments.set(id, {
+      file_name: a.file_name || 'file', file_type: a.file_type || 'application/octet-stream',
+      data: Buffer.from(a.file || '', 'base64'),
+    });
     const out = { data: { id, type: 'attachment', attributes: { file_name: a.file_name, file_type: a.file_type } } };
-    logApi(req, `POST /api/v1/attachments → 201 (${a.file_name || 'file'})`, 201, { request: body, response: out });
+    const logged = { attachment: { ...a, file: a.file ? `<${a.file.length} base64 chars>` : a.file } };
+    logApi(req, `POST /api/v1/attachments → 201 (${a.file_name || 'file'})`, 201, { request: logged, response: out });
     return sendJson(res, 201, out);
+  }
+
+  // GET /api/v1/attachments/:id — download the bytes behind a message's relative attachment link
+  // (ezMessage resolves "attachments/<id>" against channex.url, sending user-api-key).
+  if (parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'attachments' && parts.length === 4 && method === 'GET') {
+    const a = state.attachments.get(parts[3]);
+    if (!a) {
+      logApi(req, `GET /api/v1/attachments/${parts[3]} → 404`, 404, { response: null });
+      return sendJson(res, 404, { errors: { title: 'Not Found' } });
+    }
+    logApi(req, `GET /api/v1/attachments/${parts[3]} → 200 (${a.file_name}, ${a.data.length} bytes)`, 200,
+      { response: `<${a.file_type}, ${a.data.length} bytes>` });
+    res.writeHead(200, {
+      'Content-Type': a.file_type,
+      'Content-Length': a.data.length,
+      'Content-Disposition': `attachment; filename="${a.file_name.replace(/"/g, '')}"`,
+      ...CORS,
+    });
+    return res.end(a.data);
   }
 
   // GET  /api/v1/reviews  (JSON:API pagination: pagination[page]/[limit] default 10; filter[property_id] = C9)
@@ -612,17 +635,33 @@ const server = http.createServer(async (req, res) => {
       const message = body.message || '';
       const ezMessageBase = (body.ez_message_url || 'http://localhost:8080').trim();
       const propertyId = (body.property_id || '').trim() || null;
-      if (!bookingId || !message) return sendJson(res, 400, { error: 'booking_id and message are required' });
+      // Guest attachments: [{ file_name, file_type, data (base64) }] → stored and exposed as relative
+      // links "attachments/<id>" (Channex docs: "List of links to Attachments"; message may be empty).
+      const files = Array.isArray(body.attachments) ? body.attachments : [];
+      if (!bookingId || (!message && !files.length)) {
+        return sendJson(res, 400, { error: 'booking_id and a message or attachment are required' });
+      }
+      const attachments = files.map((f) => {
+        const id = uuid();
+        state.attachments.set(id, {
+          file_name: f.file_name || 'file', file_type: f.file_type || 'application/octet-stream',
+          data: Buffer.from(f.data || '', 'base64'),
+        });
+        return `attachments/${id}`;
+      });
 
       const now = channexTime();
       const b = getBooking(bookingId);
       if (propertyId) b.property_id = propertyId; // for GET /message_threads filter[property_id]
-      const m = { id: uuid(), sender: 'guest', message, attachments: [], inserted_at: now, updated_at: now };
+      const m = { id: uuid(), sender: 'guest', message, attachments, inserted_at: now, updated_at: now };
       b.messages.push(m);
-      logEvent({ direction: 'mock', summary: `Guest message queued for booking ${bookingId}`, note: message });
+      logEvent({
+        direction: 'mock', summary: `Guest message queued for booking ${bookingId}`,
+        note: message + (files.length ? ` [+${files.length} attachment(s): ${files.map(f => f.file_name).join(', ')}]` : ''),
+      });
 
       const hook = await fireMessageWebhook(ezMessageBase, {
-        bookingId, message, propertyId, messageId: m.id, threadId: b.thread_id,
+        bookingId, message, propertyId, messageId: m.id, threadId: b.thread_id, attachments,
       });
       return sendJson(res, 200, { ok: true, message: m, webhook: hook });
     }

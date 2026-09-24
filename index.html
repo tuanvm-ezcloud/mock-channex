@@ -149,6 +149,8 @@
         <div class="hint">Must match an existing booking in ezMessage, or one its CRS gRPC can resolve — otherwise ezMessage returns BOOKING_NOT_FOUND.</div>
         <label>Message</label>
         <textarea id="msgText" placeholder="Hi, what time is check-in?"></textarea>
+        <label>Attachments (optional — message may be empty when files are attached)</label>
+        <input id="msgFiles" type="file" multiple>
         <div style="margin-top:10px"><button onclick="sendMessage()">Send message → fire webhook</button></div>
         <div class="hint">Flow: stores the guest message → POSTs the <code>message</code> webhook → ezMessage calls back <code>GET /api/v1/bookings/{id}/messages</code> to pull it.</div>
       </div>
@@ -241,11 +243,19 @@ async function api(path, opts){ const r = await fetch(path, opts); return r.json
 async function sendMessage(){
   const booking_id = document.getElementById('msgBooking').value.trim();
   const message = document.getElementById('msgText').value.trim();
-  if(!booking_id || !message){ flash('Booking ID and message required'); return; }
+  const fileInput = document.getElementById('msgFiles');
+  const attachments = await Promise.all([...fileInput.files].map(f => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve({ file_name: f.name, file_type: f.type || 'application/octet-stream',
+                               data: String(r.result).split(',')[1] || '' });
+    r.onerror = reject;
+    r.readAsDataURL(f);
+  })));
+  if(!booking_id || (!message && !attachments.length)){ flash('Booking ID and a message or attachment required'); return; }
   const res = await api('/mock/send-message', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
-      booking_id, message,
+      booking_id, message, attachments,
       ez_message_url: document.getElementById('ezUrl').value.trim(),
       property_id: document.getElementById('propertyId').value.trim(),
     })
@@ -254,6 +264,7 @@ async function sendMessage(){
   const w = res.webhook || {};
   flash('Webhook → ' + (w.status||'?') + (w.ok?' OK':''));
   document.getElementById('msgText').value='';
+  fileInput.value='';
   document.getElementById('threadPicker').value = booking_id;
   await refresh(); renderThread();
 }
@@ -368,6 +379,7 @@ function renderThread(){
   el.innerHTML = b.messages.map(m=>`
     <div class="bubble ${m.sender==='guest'?'guest':'staff'}">
       ${escapeHtml(m.message)}
+      ${(m.attachments||[]).map(a=>`<div class="meta">📎 ${escapeHtml(typeof a==='string'?a:(a.file_name||a.id||'attachment'))}</div>`).join('')}
       <span class="meta">${m.sender==='guest'?'Guest':'Property (staff)'} · ${fmt(m.inserted_at)}</span>
     </div>`).join('');
   el.scrollTop = el.scrollHeight;

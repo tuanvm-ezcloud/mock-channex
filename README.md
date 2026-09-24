@@ -49,7 +49,9 @@ its activity log, so you can confirm ezMessage is actually sending it.)
 1. In the UI **Connection** panel, set **ezMessage URL** (default `http://localhost:8080`) and the
    **property_id**.
 2. **Messages** tab → enter a **Booking ID** that already exists in ezMessage (or is resolvable by
-   its CRS gRPC — otherwise ezMessage returns `BOOKING_NOT_FOUND`), type a message, **Send**.
+   its CRS gRPC — otherwise ezMessage returns `BOOKING_NOT_FOUND`), type a message and/or pick
+   **Attachments**, **Send**. Attachments are exposed as relative links `attachments/<id>` (as in the
+   Channex docs); the message text may be empty when files are attached.
 3. The mock stores the guest message, fires the `message` webhook, and ezMessage calls back to pull
    it. Watch both in the **Activity log** (click a row for the payload).
 4. Reply from ezMessage's staff UI → it POSTs back here → the reply shows on the right of the
@@ -70,7 +72,8 @@ its activity log, so you can confirm ezMessage is actually sending it.)
 | --- | --- | --- |
 | `GET`  | `/api/v1/bookings/{id}/messages` | ezMessage pulls the thread |
 | `POST` | `/api/v1/bookings/{id}/messages` | staff reply from ezMessage (`{message:{message}}` or `{message:{attachment_id}}`) |
-| `POST` | `/api/v1/attachments` | returns `{data:{id}}` |
+| `POST` | `/api/v1/attachments` | returns `{data:{id}}` (bytes kept for download) |
+| `GET`  | `/api/v1/attachments/{id}` | ezMessage downloads a guest attachment (relative link resolved against `channex.url`) |
 | `GET`  | `/api/v1/reviews` | ezMessage pulls reviews |
 | `POST` | `/api/v1/reviews/{id}/reply` | staff review reply (`{reply:{reply}}`) |
 | `GET`  | `/api/v1/message_threads` | extranet.api's Channex check on OTA connect / reconnect |
@@ -168,8 +171,10 @@ Still: tear the instance down when finished, and don't point it at data that mat
   ezMessage only ingests `"guest"` messages on pull (it already has its own copy of staff replies).
 - Timestamps use Channex's format `YYYY-MM-DDTHH:mm:ss.SSSSSS` (no `Z`), which ezMessage's review
   parser (`LocalDateTime.parse`) requires.
-- Inbound attachments are acknowledged but ezMessage v1 does not ingest them (documented in the OTA
-  plan); staff outbound attachments via `attachment_id` are shown as a placeholder bubble.
+- Guest attachments are ingested by ezMessage (downloaded, uploaded to the CDN, shown as IMAGE/FILE
+  messages). The real Channex attachment link format is only documented, not verified against a live
+  payload — the mock follows the docs. Staff outbound attachments via `attachment_id` are shown as a
+  placeholder bubble.
 - **Review reply is lenient:** `POST /api/v1/reviews/{id}/reply` accepts a reply even for a review
   the mock doesn't hold (state is in-memory and resets on restart / Render spin-down, and never
   includes reviews seeded straight into ezMessage's DB). It returns `200` and auto-creates a stub
