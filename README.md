@@ -46,8 +46,8 @@ its activity log, so you can confirm ezMessage is actually sending it.)
 
 ## Testing messages
 
-1. In the UI **Connection** panel, set **ezMessage URL** (default `http://localhost:8080`) and the
-   **property_id**.
+1. In the UI **Connection** panel, set **ezMessage URL** (default `http://localhost:8080`). There is no
+   property box: ezMessage resolves the hotel from the booking (CRS), so the mock sends `property_id: null`.
 2. **Messages** tab → enter a **Booking ID** that already exists in ezMessage (or is resolvable by
    its CRS gRPC — otherwise ezMessage returns `BOOKING_NOT_FOUND`), type a message and/or pick
    **Attachments**, **Send**. Attachments are exposed as relative links `attachments/<id>` (as in the
@@ -59,7 +59,7 @@ its activity log, so you can confirm ezMessage is actually sending it.)
 
 ## Testing reviews
 
-1. **Reviews** tab → fill booking id, property id, guest, score, category scores, content →
+1. **Reviews** tab → fill booking id, OTA, score, category scores, content →
    **Create review**.
 2. Trigger the pull from ezMessage (`GET /channex/review/get-list`). ezMessage calls
    `GET /api/v1/reviews` here and ingests it.
@@ -92,9 +92,11 @@ Plus the webhook it **sends**: `POST {ezMessageUrl}/channex/push_message` with
 Mock-control endpoints used by the UI (same origin): `GET /mock/state`, `POST /mock/send-message`,
 `POST /mock/reviews`, `POST /mock/reply-extranet`, `POST /mock/check-mode`, `POST /mock/reset`.
 
-Review endpoints also honour `GET /api/v1/reviews?filter[property_id]=…&pagination[page]=…&pagination[limit]=…`
-(hotel-aware pull; a property id starting with `noapp` returns 403 to simulate the missing "Messages &
-Reviews" app), and `GET /api/v1/scores/{id}` / `…/detailed`. `POST /mock/reviews` with an existing `id`
+**property_id is not modelled.** The mock behaves as a single implicit Channex property: webhooks carry
+`property_id: null`, reviews/threads have `relationships.property.data.id: null`, `filter[property_id]` is
+ignored, and `GET /api/v1/scores/{id}` / `…/detailed` aggregate all reviews. With a null `property_id`,
+ezMessage takes its account-wide pull path (C9 per-property scoping and the C8 403 skip aren't exercised).
+Reviews support `pagination[page]` / `pagination[limit]`. `POST /mock/reviews` with an existing `id`
 **updates** that review and fires `updated_review` (default event); otherwise it creates one and fires `review`.
 
 ## Bidirectional review-flow verification
@@ -103,8 +105,8 @@ Reviews" app), and `GET /api/v1/scores/{id}` / `…/detailed`. `POST /mock/revie
 **both directions** — it spawns the mock and an ezMessage stand-in that mirrors the exact ingest/reply
 decisions of `ReviewIngestService` / `ReviewWebhookService` / extranet `ReviewService`, then asserts:
 inbound `review`+`updated_review` (pull, upsert, C5/C6 fields, B1 property, C7 change-detect & OTA-reply
-sync), B3 connection gate, C9 `filter[property_id]` scoping, C8 403 skip, outbound reply push-then-persist
-(C3, incl. the no-local-write-on-failure case), and the outbound→inbound round-trip. (The real Spring
+sync), B3 connection gate, outbound reply push-then-persist
+(C3, incl. the no-local-write-on-failure case, simulated with a wrong `user-api-key`), and the outbound→inbound round-trip. (The real Spring
 services can't boot here — they need MariaDB/Redis/gRPC — so this verifies the HTTP contract + logic, and
 the Java compiles clean against these same decisions.)
 

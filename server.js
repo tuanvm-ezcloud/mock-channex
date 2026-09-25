@@ -120,7 +120,7 @@ function messageResource(bookingId, m) {
 }
 
 function makeReview({ content, guest_name, ota, ota_reservation_id, overall_score,
-                      scores, booking_id, property_id, channel_id }) {
+                      scores, booking_id, channel_id }) {
   const now = channexTime();
   return {
     id: uuid(),
@@ -143,7 +143,8 @@ function makeReview({ content, guest_name, ota, ota_reservation_id, overall_scor
     relationships: {
       booking: { data: { id: booking_id, type: 'booking' } },
       channel: { data: { id: channel_id || uuid(), type: 'channel' } },
-      property: { data: { id: property_id, type: 'property' } },
+      // property_id is not modelled: ezMessage resolves the hotel from the booking (CRS), never from Channex.
+      property: { data: { id: null, type: 'property' } },
     },
   };
 }
@@ -204,7 +205,7 @@ function checkUi(req, res) {
 // ---------------------------------------------------------------------------
 // Fire the message webhook to ezMessage (server-side, so no browser CORS issue).
 // ---------------------------------------------------------------------------
-async function fireMessageWebhook(ezMessageBase, { bookingId, message, propertyId, messageId, threadId, attachments = [] }) {
+async function fireMessageWebhook(ezMessageBase, { bookingId, message, messageId, threadId, attachments = [] }) {
   const url = ezMessageBase.replace(/\/+$/, '') + '/channex/push_message';
   const payload = {
     event: 'message',
@@ -213,7 +214,7 @@ async function fireMessageWebhook(ezMessageBase, { bookingId, message, propertyI
       message,
       meta: null,
       sender: 'guest',
-      property_id: propertyId || null,
+      property_id: null,                // not modelled — ezMessage takes the hotel from the booking
       booking_id: bookingId,
       message_thread_id: threadId,
       live_feed_event_id: uuid(),
@@ -221,7 +222,7 @@ async function fireMessageWebhook(ezMessageBase, { bookingId, message, propertyI
       have_attachment: attachments.length > 0,
       ota_message_id: uuid(),
     },
-    property_id: propertyId || null,
+    property_id: null,
     user_id: null,
     timestamp: channexTime() + 'Z',
   };
@@ -448,9 +449,7 @@ const server = http.createServer(async (req, res) => {
     }
     const page = Math.max(1, parseInt(u.searchParams.get('pagination[page]') || '1', 10) || 1);
     const limit = Math.max(1, parseInt(u.searchParams.get('pagination[limit]') || '10', 10) || 10);
-    const propFilter = u.searchParams.get('filter[property_id]');
     let all = [...state.bookings.entries()]
-      .filter(([, b]) => !propFilter || b.property_id === propFilter)
       .map(([bookingId, b]) => {
         const last = b.messages[b.messages.length - 1];
         const first = b.messages[0];
@@ -468,7 +467,7 @@ const server = http.createServer(async (req, res) => {
             updated_at: last ? last.updated_at : channexTime(),
           },
           relationships: {
-            property: { data: { id: b.property_id || null, type: 'property' } },
+            property: { data: { id: null, type: 'property' } },
             booking: { data: { id: bookingId, type: 'booking' } },
           },
         };
@@ -514,36 +513,26 @@ const server = http.createServer(async (req, res) => {
     return res.end(a.data);
   }
 
-  // GET  /api/v1/reviews  (JSON:API pagination: pagination[page]/[limit] default 10; filter[property_id] = C9)
+  // GET  /api/v1/reviews  (JSON:API pagination: pagination[page]/[limit] default 10).
+  // property_id isn't modelled (the mock is one implicit property), so filter[property_id] is ignored.
   if (parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'reviews' && parts.length === 3 && method === 'GET') {
     const page = Math.max(1, parseInt(u.searchParams.get('pagination[page]') || '1', 10) || 1);
     const limit = Math.max(1, parseInt(u.searchParams.get('pagination[limit]') || '10', 10) || 10);
-    const propFilter = u.searchParams.get('filter[property_id]');
-    // C8 sim: a property whose id starts with "noapp" has no Messages & Reviews app → Channex 403.
-    if (propFilter && propFilter.startsWith('noapp')) {
-      const out = { errors: { title: 'Forbidden', detail: 'Messages & Reviews application is not installed' } };
-      logApi(req, `GET /api/v1/reviews filter[property_id]=${propFilter} → 403 (app not installed)`, 403, { response: out });
-      return sendJson(res, 403, out);
-    }
     // stamp attributes.id == top-level id (Channex does this); newest first (state.reviews is unshift-ed)
-    let all = state.reviews.map(r => ({ ...r, attributes: { ...r.attributes, id: r.id } }));
-    if (propFilter) {
-      all = all.filter(r => r.relationships && r.relationships.property && r.relationships.property.data
-        && r.relationships.property.data.id === propFilter);
-    }
+    const all = state.reviews.map(r => ({ ...r, attributes: { ...r.attributes, id: r.id } }));
     const start = (page - 1) * limit;
     const data = all.slice(start, start + limit);
     const out = { data, meta: { limit, page, total: all.length } };
-    logApi(req, `GET /api/v1/reviews?page=${page}&limit=${limit}${propFilter ? ' filter[property_id]=' + propFilter : ''} → 200 (${data.length}/${all.length})`, 200, { response: out });
+    logApi(req, `GET /api/v1/reviews?page=${page}&limit=${limit} → 200 (${data.length}/${all.length})`, 200, { response: out });
     return sendJson(res, 200, out);
   }
 
   // GET  /api/v1/scores/:property_id  and  /api/v1/scores/:property_id/detailed  (C4)
+  // Aggregates ALL mock reviews — property_id isn't modelled, so the path id is just echoed back.
   if (parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'scores' && parts[3] && method === 'GET') {
     const propertyId = parts[3];
     const detailed = parts[4] === 'detailed';
-    const revs = state.reviews.filter(r => r.relationships && r.relationships.property
-      && r.relationships.property.data && r.relationships.property.data.id === propertyId);
+    const revs = state.reviews;
     const count = revs.length;
     const avg = arr => arr.length ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 100) / 100 : 0;
     const overall = avg(revs.map(r => r.attributes.overall_score || 0));
@@ -634,7 +623,6 @@ const server = http.createServer(async (req, res) => {
       const bookingId = (body.booking_id || '').trim();
       const message = body.message || '';
       const ezMessageBase = (body.ez_message_url || 'http://localhost:8080').trim();
-      const propertyId = (body.property_id || '').trim() || null;
       // Guest attachments: [{ file_name, file_type, data (base64) }] → stored and exposed as relative
       // links "attachments/<id>" (Channex docs: "List of links to Attachments"; message may be empty).
       const files = Array.isArray(body.attachments) ? body.attachments : [];
@@ -652,7 +640,6 @@ const server = http.createServer(async (req, res) => {
 
       const now = channexTime();
       const b = getBooking(bookingId);
-      if (propertyId) b.property_id = propertyId; // for GET /message_threads filter[property_id]
       const m = { id: uuid(), sender: 'guest', message, attachments, inserted_at: now, updated_at: now };
       b.messages.push(m);
       logEvent({
@@ -661,7 +648,7 @@ const server = http.createServer(async (req, res) => {
       });
 
       const hook = await fireMessageWebhook(ezMessageBase, {
-        bookingId, message, propertyId, messageId: m.id, threadId: b.thread_id, attachments,
+        bookingId, message, messageId: m.id, threadId: b.thread_id, attachments,
       });
       return sendJson(res, 200, { ok: true, message: m, webhook: hook });
     }
@@ -684,8 +671,8 @@ const server = http.createServer(async (req, res) => {
         const webhook = await fireReviewWebhook(ezMessageBase, existing, body.event || 'updated_review');
         return sendJson(res, 200, { ok: true, review: existing, webhook });
       }
-      if (!body.booking_id || !body.property_id) {
-        return sendJson(res, 400, { error: 'booking_id and property_id are required' });
+      if (!body.booking_id) {
+        return sendJson(res, 400, { error: 'booking_id is required' });
       }
       const review = makeReview(body);
       state.reviews.unshift(review);

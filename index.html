@@ -92,11 +92,6 @@
         <div class="hint conn-detail" hidden>Must include the context path <code>/api/v1/ezmessage</code>. Webhooks are POSTed to:<br>
           → <code id="ezPreview"></code> &nbsp;(reviews: <code>/channex/push_review</code>)</div>
       </div>
-      <div>
-        <label>Default property_id (UUID)</label>
-        <input id="propertyId" placeholder="e.g. 680585d7-af7f-4880-8e91-25fca1508b55">
-        <div class="hint conn-detail" hidden>The hotel's propertyId in ezMessage / CRS.</div>
-      </div>
     </div>
     <div class="row conn-detail" hidden>
       <div>
@@ -178,7 +173,6 @@
         <h2>Create a guest review</h2>
         <div class="row">
           <div><label>Booking ID</label><input id="revBooking" placeholder="external booking id"></div>
-          <div><label>Property ID (UUID)</label><input id="revProperty" placeholder="hotel propertyId"></div>
         </div>
         <div class="row">
           <div><label>OTA</label>
@@ -224,7 +218,7 @@ let currentTab = 'msg';
 
 function flash(msg){ const f=document.getElementById('flash'); f.textContent=msg; f.classList.add('show'); setTimeout(()=>f.classList.remove('show'),1800); }
 function copyBase(){ navigator.clipboard.writeText('channex.url='+API_BASE).then(()=>flash('Copied config')); }
-let connExpanded = false; // Connection card starts simplified: only the webhook + property_id boxes.
+let connExpanded = false; // Connection card starts simplified: only the webhook URL box.
 function toggleConn(){
   connExpanded = !connExpanded;
   document.querySelectorAll('.conn-detail').forEach(el => { el.hidden = !connExpanded; });
@@ -257,7 +251,6 @@ async function sendMessage(){
     body: JSON.stringify({
       booking_id, message, attachments,
       ez_message_url: document.getElementById('ezUrl').value.trim(),
-      property_id: document.getElementById('propertyId').value.trim(),
     })
   });
   if(res.error){ flash(res.error); return; }
@@ -298,12 +291,11 @@ function addScore(){
 
 async function createReview(){
   const booking_id = document.getElementById('revBooking').value.trim();
-  const property_id = document.getElementById('revProperty').value.trim() || document.getElementById('propertyId').value.trim();
-  if(!booking_id || !property_id){ flash('Booking ID and Property ID required'); return; }
+  if(!booking_id){ flash('Booking ID required'); return; }
   const res = await api('/mock/reviews', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
-      booking_id, property_id,
+      booking_id,
       ez_message_url: document.getElementById('ezUrl').value.trim(),
       ota: document.getElementById('revOta').value,
       overall_score: clamp(document.getElementById('revScore').value),

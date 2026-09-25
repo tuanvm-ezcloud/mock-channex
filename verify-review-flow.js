@@ -75,7 +75,8 @@ function upsert(rv) {
   return { code, inserted: true };
 }
 
-// Mirrors ReviewService.syncReviewsForProperty (C9 filter[property_id]) + runSync (C8 403 skip).
+// Mirrors ReviewService.runSync. The webhook's property_id is null (not modelled by the mock), so this
+// is the account-wide pull; filter[property_id] / the C8 403 path aren't exercised.
 async function pullAndIngest(channexPropertyId) {
   let page = 1; const limit = 100; const results = [];
   while (true) {
@@ -101,9 +102,9 @@ async function handleWebhook(body) {
 }
 
 // Mirrors extranet ReviewService.replyReview (C3 push-then-persist).
-async function replyToReview(reviewCode, text) {
+async function replyToReview(reviewCode, text, headers = HDR) {
   const resp = await fetch(`${MOCK}/api/v1/reviews/${reviewCode}/reply`, {
-    method: 'POST', headers: HDR, body: JSON.stringify({ reply: { reply: text } }),
+    method: 'POST', headers, body: JSON.stringify({ reply: { reply: text } }),
   });
   if (!resp.ok) return { error: `push failed ${resp.status}` };   // C3: DON'T persist local
   const r = db.reviews.get(reviewCode);
@@ -124,7 +125,10 @@ function check(name, cond, detail) {
 
 async function main() {
   // 1) start the mock
-  const mock = spawn('node', [path.join(__dirname, 'server.js')], { stdio: 'ignore' });
+  // API-key gate ON so a wrong key can simulate a failed push (the reply endpoint is lenient on unknown ids).
+  const mock = spawn('node', [path.join(__dirname, 'server.js')], {
+    stdio: 'ignore', env: { ...process.env, MOCK_API_KEY: HDR['user-api-key'] },
+  });
   // 2) start the ezMessage stand-in webhook receiver
   const srv = http.createServer((req, res) => {
     if (req.method === 'POST' && req.url === '/channex/push_review') {
@@ -145,7 +149,7 @@ async function main() {
     seedBooking('BK-INB', { propertyId: 'ez-hotel-1', otaCode: 'BDC', connected: true });
 
     const created = await createReview({
-      booking_id: 'BK-INB', property_id: 'chx-prop-1', overall_score: 8, guest_name: 'Alice',
+      booking_id: 'BK-INB', overall_score: 8, guest_name: 'Alice',
       ota: 'BookingCom', ota_reservation_id: 'RES-77', content: 'Lovely stay',
       scores: [{ category: 'clean', score: 8 }, { category: 'location', score: 9 }],
     });
@@ -157,12 +161,12 @@ async function main() {
     check('ratings stored (clean+location)', r1 && r1.ratings.clean === 8 && r1.ratings.location === 9);
     check('C5 fields stored (guestName/otaName/reservationId/receivedAt)',
       r1 && r1.guestName === 'Alice' && r1.otaName === 'BookingCom' && r1.otaReservationId === 'RES-77' && !!r1.receivedAt);
-    check('C4 channexPropertyId captured', r1 && r1.channexPropertyId === 'chx-prop-1', r1 && r1.channexPropertyId);
+    check('channexPropertyId is null (mock does not model property_id)', r1 && r1.channexPropertyId === null, r1 && r1.channexPropertyId);
     check('B1 ezCloud propertyId from booking (not Channex id)', r1 && r1.propertyId === 'ez-hotel-1');
     const insertedUpdatedAt = r1 && r1.otaUpdatedAt;
 
     // idempotent re-pull (no mock change) → C7 change-detect skip
-    await pullAndIngest('chx-prop-1');
+    await pullAndIngest(null);
     check('idempotent re-pull → skipped (otaUpdatedAt unchanged)',
       db.lastIngest.some(x => x.code === code && x.skipped === 'unchanged'));
 
@@ -178,34 +182,15 @@ async function main() {
     // B3 gate: review for a booking whose channel is NOT connected → skipped
     console.log('\n── INBOUND: B3 connection gate ──');
     seedBooking('BK-OFF', { propertyId: 'ez-hotel-1', otaCode: 'BDC', connected: false });
-    const off = await createReview({ booking_id: 'BK-OFF', property_id: 'chx-prop-1', overall_score: 7, content: 'x' });
+    const off = await createReview({ booking_id: 'BK-OFF', overall_score: 7, content: 'x' });
     check('review for disconnected channel is NOT ingested (B3)',
       db.lastIngest.some(x => x.skipped === 'gate-not-connected') && !db.reviews.has(off.review.id));
-
-    // C9 hotel-aware scoping
-    console.log('\n── INBOUND: C9 filter[property_id] scoping ──');
-    await reset(); db.reviews.clear();
-    seedBooking('BK-A', { propertyId: 'ez-A', otaCode: 'BDC', connected: true });
-    seedBooking('BK-B', { propertyId: 'ez-B', otaCode: 'EXP', connected: true });
-    // create B first (no webhook side-effect matters), then A; then a webhook for prop-A only
-    await fetch(`${MOCK}/mock/reviews`, { method: 'POST', headers: HDR, body: JSON.stringify({ booking_id: 'BK-B', property_id: 'chx-B', overall_score: 6, content: 'b' }) });
-    await fetch(`${MOCK}/mock/reviews`, { method: 'POST', headers: HDR, body: JSON.stringify({ booking_id: 'BK-A', property_id: 'chx-A', overall_score: 9, content: 'a' }) });
-    db.reviews.clear();
-    await handleWebhook({ event: 'review', property_id: 'chx-A' });
-    check('only prop-A review ingested (filter[property_id])',
-      [...db.reviews.values()].every(r => r.channexPropertyId === 'chx-A') && db.reviews.size === 1,
-      `size=${db.reviews.size}`);
-
-    // C8: property without the Reviews app → 403 → graceful skip
-    console.log('\n── INBOUND: C8 403 (app not installed) ──');
-    const app403 = await pullAndIngest('noapp-prop-x');
-    check('403 handled gracefully (no throw, no ingest)', app403.app403 === true);
 
     // ===================== OUTBOUND (ezMessage → Channex) =====================
     console.log('\n── OUTBOUND: staff reply push-then-persist (C3) ──');
     await reset(); db.reviews.clear();
     seedBooking('BK-OUT', { propertyId: 'ez-hotel-2', otaCode: 'BDC', connected: true });
-    const c = await createReview({ booking_id: 'BK-OUT', property_id: 'chx-2', overall_score: 7, content: 'fine' });
+    const c = await createReview({ booking_id: 'BK-OUT', overall_score: 7, content: 'fine' });
     const outCode = c.review.id;
     const ok = await replyToReview(outCode, 'Cảm ơn quý khách!');
     check('reply push succeeded', ok.ok === true);
@@ -215,9 +200,9 @@ async function main() {
     check('reply reached Channex (mock attributes.reply + is_replied)',
       mockReview && mockReview.attributes.reply === 'Cảm ơn quý khách!' && mockReview.attributes.is_replied === true);
 
-    // C3: push FAILS (unknown review id → mock 404) → must NOT persist locally
+    // C3: push FAILS (wrong user-api-key → mock 401) → must NOT persist locally
     const before = JSON.stringify([...db.reviews.entries()]);
-    const failRes = await replyToReview('00000000-0000-0000-0000-000000000000', 'ghost');
+    const failRes = await replyToReview(outCode, 'ghost', { ...HDR, 'user-api-key': 'wrong-key' });
     check('reply push failure returns error', !!failRes.error, failRes.error);
     check('no local write on push failure (C3 push-then-persist)', JSON.stringify([...db.reviews.entries()]) === before);
 
