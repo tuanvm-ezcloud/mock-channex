@@ -119,7 +119,7 @@ function messageResource(bookingId, m) {
   };
 }
 
-function makeReview({ content, guest_name, ota, ota_reservation_id, overall_score,
+function makeReview({ content, guest_name, ota_reservation_id, overall_score,
                       scores, booking_id, channel_id }) {
   const now = channexTime();
   return {
@@ -129,7 +129,7 @@ function makeReview({ content, guest_name, ota, ota_reservation_id, overall_scor
       id: undefined, // filled below to equal top-level id
       content: content || '',
       guest_name: guest_name || null,   // ezMessage resolves the name from the booking's customer
-      ota: ota || 'BookingCom',
+      ota: null,                        // ezMessage takes the OTA (otaCode) from the booking, not from Channex
       ota_reservation_id: ota_reservation_id || '',
       overall_score: Number(overall_score) || 0,
       is_hidden: false,
@@ -577,7 +577,7 @@ const server = http.createServer(async (req, res) => {
       // spin-down — or seeded straight into ezMessage's DB. Real Channex would 404,
       // but for testing we accept the reply anyway and auto-create a stub review so
       // the staff-reply flow (extranet → Channex → save) isn't blocked by lost state.
-      review = makeReview({ guest_name: 'Unknown (reply-only)', ota: 'OTA', content: '' });
+      review = makeReview({ guest_name: 'Unknown (reply-only)', content: '' });
       review.id = reviewId;
       review.attributes.id = reviewId;
       review.stub = true;

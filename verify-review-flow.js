@@ -150,7 +150,7 @@ async function main() {
 
     const created = await createReview({
       booking_id: 'BK-INB', overall_score: 8, guest_name: 'Alice',
-      ota: 'BookingCom', ota_reservation_id: 'RES-77', content: 'Lovely stay',
+      ota_reservation_id: 'RES-77', content: 'Lovely stay',
       scores: [{ category: 'clean', score: 8 }, { category: 'location', score: 9 }],
     });
     const code = created.review.id;
@@ -160,7 +160,7 @@ async function main() {
     check('guest content stored', r1 && r1.guestComment === 'Lovely stay');
     check('ratings stored (clean+location)', r1 && r1.ratings.clean === 8 && r1.ratings.location === 9);
     check('C5 fields stored (guestName/otaName/reservationId/receivedAt)',
-      r1 && r1.guestName === 'Alice' && r1.otaName === 'BookingCom' && r1.otaReservationId === 'RES-77' && !!r1.receivedAt);
+      r1 && r1.guestName === 'Alice' && r1.otaName === null && r1.otaReservationId === 'RES-77' && !!r1.receivedAt);
     check('channexPropertyId is null (mock does not model property_id)', r1 && r1.channexPropertyId === null, r1 && r1.channexPropertyId);
     check('B1 ezCloud propertyId from booking (not Channex id)', r1 && r1.propertyId === 'ez-hotel-1');
     const insertedUpdatedAt = r1 && r1.otaUpdatedAt;

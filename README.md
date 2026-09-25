@@ -59,7 +59,7 @@ its activity log, so you can confirm ezMessage is actually sending it.)
 
 ## Testing reviews
 
-1. **Reviews** tab → fill booking id, OTA, score, category scores, content →
+1. **Reviews** tab → fill booking id, score, category scores, content →
    **Create review**.
 2. Trigger the pull from ezMessage (`GET /channex/review/get-list`). ezMessage calls
    `GET /api/v1/reviews` here and ingests it.
@@ -93,7 +93,7 @@ Mock-control endpoints used by the UI (same origin): `GET /mock/state`, `POST /m
 `POST /mock/reviews`, `POST /mock/reply-extranet`, `POST /mock/check-mode`, `POST /mock/reset`.
 
 **property_id is not modelled.** The mock behaves as a single implicit Channex property: webhooks carry
-`property_id: null`, reviews/threads have `relationships.property.data.id: null`, `filter[property_id]` is
+`property_id: null`, reviews carry `ota: null` (ezMessage takes the OTA from the booking), reviews/threads have `relationships.property.data.id: null`, `filter[property_id]` is
 ignored, and `GET /api/v1/scores/{id}` / `…/detailed` aggregate all reviews. With a null `property_id`,
 ezMessage takes its account-wide pull path (C9 per-property scoping and the C8 403 skip aren't exercised).
 Reviews support `pagination[page]` / `pagination[limit]`. `POST /mock/reviews` with an existing `id`
